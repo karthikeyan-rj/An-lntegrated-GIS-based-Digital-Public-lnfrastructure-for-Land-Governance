@@ -10,4 +10,13 @@ export default defineConfig({
       '@': path.resolve(import.meta.dirname, './src'),
     },
   },
+  server: {
+    proxy: {
+      // Proxy API calls to the LandStack backend during development.
+      '/api': {
+        target: 'http://localhost:4000',
+        changeOrigin: true,
+      },
+    },
+  },
 })

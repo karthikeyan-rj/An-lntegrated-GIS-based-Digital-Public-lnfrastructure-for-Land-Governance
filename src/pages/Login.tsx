@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { Button } from '@/components/ui/Button'
-import { Workflow, Mail, Lock, User, Shield, Building2, Cpu, Zap } from 'lucide-react'
+import { Workflow, Mail, Lock, User, Shield, Building2, Cpu, Zap, AlertCircle, Loader2 } from 'lucide-react'
 import type { UserRole } from '@/types'
 
 const TABS = [
@@ -27,25 +27,36 @@ const FEATURES = [
 ]
 
 export default function Login() {
-  const { login } = useAuth()
+  const { login, loginReal, register } = useAuth()
   const navigate = useNavigate()
+  const [authMode, setAuthMode] = useState<'signin' | 'signup'>('signin')
   const [activeTab, setActiveTab] = useState<string>('citizen')
+  const [name, setName] = useState('')
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const handleDemoLogin = (role: UserRole) => {
     login(role)
     navigate('/dashboard')
   }
 
-  const handleFormSubmit = (e: React.FormEvent) => {
+  const handleRealSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (activeTab === 'citizen') {
-      handleDemoLogin('citizen')
-    } else if (activeTab === 'official') {
-      handleDemoLogin('revenue_officer')
-    } else {
-      handleDemoLogin('administrator')
+    setError(null)
+    setLoading(true)
+    try {
+      if (authMode === 'signin') {
+        await loginReal(email, password)
+      } else {
+        await register({ name, email, password })
+      }
+      navigate('/dashboard')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Authentication failed')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -99,36 +110,91 @@ export default function Login() {
           </div>
 
           <h2 className="text-2xl font-bold text-slate-900">Welcome back</h2>
-          <p className="mt-1 text-sm text-slate-500">Sign in to access the land governance platform</p>
+          <p className="mt-1 text-sm text-slate-500">
+            {authMode === 'signin'
+              ? 'Sign in with a registered account (stored securely in MongoDB)'
+              : 'Create a new citizen account'}
+          </p>
 
-          {/* Tab Selector */}
+          {/* Sign in / Sign up toggle */}
           <div className="mt-6 flex rounded-lg bg-slate-100 p-1">
-            {TABS.map((tab) => (
+            {(
+              [
+                { key: 'signin', label: 'Sign In' },
+                { key: 'signup', label: 'Create Account' },
+              ] as const
+            ).map((mode) => (
               <button
-                key={tab.key}
-                onClick={() => setActiveTab(tab.key)}
+                key={mode.key}
+                type="button"
+                onClick={() => { setAuthMode(mode.key); setError(null) }}
                 className={`flex-1 py-2 px-3 text-xs font-semibold rounded-md transition-all ${
-                  activeTab === tab.key
+                  authMode === mode.key
                     ? 'bg-white text-slate-900 shadow-sm'
                     : 'text-slate-500 hover:text-slate-700'
                 }`}
               >
-                {tab.label}
+                {mode.label}
               </button>
             ))}
           </div>
 
-          {/* Form */}
-          <form onSubmit={handleFormSubmit} className="mt-6 space-y-4">
+          {/* Tab Selector (role intent, used on signup) */}
+          {authMode === 'signup' && (
+            <div className="mt-4 flex rounded-lg bg-slate-100 p-1">
+              {TABS.map((tab) => (
+                <button
+                  key={tab.key}
+                  type="button"
+                  onClick={() => setActiveTab(tab.key)}
+                  className={`flex-1 py-2 px-3 text-xs font-semibold rounded-md transition-all ${
+                    activeTab === tab.key
+                      ? 'bg-white text-slate-900 shadow-sm'
+                      : 'text-slate-500 hover:text-slate-700'
+                  }`}
+                >
+                  {tab.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {error && (
+            <div className="mt-4 flex items-start gap-2 rounded-lg border border-red-200 bg-red-50 px-3 py-2.5">
+              <AlertCircle className="w-4 h-4 text-red-500 mt-0.5 flex-shrink-0" />
+              <p className="text-xs text-red-600">{error}</p>
+            </div>
+          )}
+
+          {/* Real login / signup form */}
+          <form onSubmit={handleRealSubmit} className="mt-6 space-y-4">
+            {authMode === 'signup' && (
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1.5">Full Name</label>
+                <div className="relative">
+                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+                  <input
+                    type="text"
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Your full name"
+                    required
+                    className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-transparent transition-all"
+                  />
+                </div>
+              </div>
+            )}
+
             <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email or Mobile</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1.5">Email</label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
                 <input
-                  type="text"
+                  type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
                   placeholder="you@example.com"
+                  required
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-transparent transition-all"
                 />
               </div>
@@ -142,45 +208,49 @@ export default function Login() {
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder="Enter your password"
+                  placeholder={authMode === 'signup' ? 'At least 6 characters' : 'Enter your password'}
+                  minLength={6}
+                  required
                   className="w-full pl-10 pr-4 py-2.5 rounded-lg border border-slate-200 bg-white text-sm text-slate-900 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-transparent transition-all"
                 />
               </div>
             </div>
 
-            <Button type="submit" className="w-full">
-              Login
+            <Button type="submit" className="w-full" disabled={loading}>
+              {loading ? (
+                <>
+                  <Loader2 className="w-4 h-4 animate-spin" />
+                  {authMode === 'signin' ? 'Signing in...' : 'Creating account...'}
+                </>
+              ) : authMode === 'signin' ? (
+                'Sign In'
+              ) : (
+                'Create Account'
+              )}
             </Button>
 
-            <Button type="button" variant="secondary" className="w-full">
-              Login with Government ID
-            </Button>
+            <p className="text-[11px] text-center text-slate-400">
+              New accounts are stored in the backend database with hashed passwords (bcrypt). No demo fallback is used on failed sign-in.
+            </p>
           </form>
 
-          <div className="mt-6 relative">
+          {/* Demo Login Section */}
+          <div className="mt-8 relative">
             <div className="absolute inset-0 flex items-center">
               <div className="w-full border-t border-slate-200" />
             </div>
             <div className="relative flex justify-center text-xs">
-              <span className="bg-white px-3 text-slate-400">or</span>
+              <span className="bg-white px-3 text-slate-400">or use a demo role</span>
             </div>
           </div>
-
-          <p className="mt-4 text-center text-sm text-slate-500">
-            Don't have an account?{' '}
-            <button className="text-gov-600 font-semibold hover:underline">
-              Create Citizen Account
-            </button>
-          </p>
-
-          {/* Demo Login Section */}
-          <div className="mt-8 bg-slate-50 rounded-xl border border-slate-200 p-6">
+          <div className="mt-4 bg-slate-50 rounded-xl border border-slate-200 p-6">
             <div className="flex items-center gap-2 mb-4">
               <User className="w-5 h-5 text-gov-600" />
               <h3 className="text-sm font-bold text-slate-900">Quick Demo Access</h3>
+              <span className="ml-auto px-2 py-0.5 rounded-full bg-amber-100 border border-amber-300 text-amber-700 text-[10px] font-semibold">DEMO DATA</span>
             </div>
             <p className="text-xs text-slate-500 mb-4">
-              Click any role to instantly log in with demo credentials
+              Click any role to instantly log in with demo credentials — no backend required
             </p>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
               {DEMO_ROLES.map((demo) => (

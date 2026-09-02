@@ -7,6 +7,8 @@ export interface User {
   role: UserRole
   department: string
   avatar?: string
+  /** True for accounts created against the real MongoDB backend. */
+  isReal?: boolean
 }
 
 export type OwnershipStatus = 'verified' | 'pending' | 'disputed' | 'unverified'
