@@ -12,15 +12,15 @@ dist
 dist-ssr
 *.local
 
-# Environment variables (secrets) — NEVER commit
+# Environment variables (secrets) - NEVER commit
 .env
 .env.*
-server/.env
-server/.env.*
-!server/.env.example
-!.env.example
-server/.env
-server/.env.*
+backend/.env
+backend/.env.*
+frontend/.env
+frontend/.env.*
+!backend/.env.example
+!frontend/.env.example
 !.env.example
 
 # Editor directories and files
