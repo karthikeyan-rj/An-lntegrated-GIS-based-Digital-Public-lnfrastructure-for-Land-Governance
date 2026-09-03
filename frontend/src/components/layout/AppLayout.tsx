@@ -2,6 +2,7 @@ import { Outlet, Navigate } from 'react-router-dom'
 import { useAuth } from '@/context/AuthContext'
 import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
+import { ChatAssistant } from './ChatAssistant'
 
 export function AppLayout() {
   const { isAuthenticated, authReady } = useAuth()
@@ -28,6 +29,7 @@ export function AppLayout() {
           <Outlet />
         </main>
       </div>
+      <ChatAssistant />
     </div>
   )
 }

@@ -6,7 +6,7 @@
  * backend/.env:
  *
  *   GEMINI_API_KEY=...        # (needed) never commit the real key
- *   GEMINI_MODEL=...          # optional, default gemini-2.0-flash
+ *   GEMINI_MODEL=...          # optional, default gemini-3.6-flash
  *
  * The frontend NEVER talks to Gemini directly — it only calls LandStack's
  * own /api/ai/* endpoints. This module is used by aiService.js to enrich
@@ -21,7 +21,7 @@ export function isGeminiConfigured() {
 }
 
 export function geminiModel() {
-  return process.env.GEMINI_MODEL || 'gemini-2.0-flash'
+  return process.env.GEMINI_MODEL || 'gemini-3.6-flash'
 }
 
 function requestTimeoutMs() {
