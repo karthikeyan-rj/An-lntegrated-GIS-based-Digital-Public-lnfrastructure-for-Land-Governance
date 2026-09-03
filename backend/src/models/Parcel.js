@@ -28,6 +28,9 @@ const parcelSchema = new mongoose.Schema(
     pattaNumber: String,
     classification: String,
     verificationStatus: String,
+    // Ownership: the registered citizen user account that owns this parcel.
+    // Only this owner (or administrators) may view the full private record.
+    ownerUserId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', index: true, default: null },
     restrictions: { type: [String], default: [] },
     utilities: {
       type: {

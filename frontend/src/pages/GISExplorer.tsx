@@ -30,6 +30,8 @@ import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
 import { searchParcels, getParcelById } from '@/data/parcels'
 import localParcels from '@/data/parcels'
+import { useAuth } from '@/context/AuthContext'
+import { canViewDepartmentRecords } from '@/lib/permissions'
 import type { Parcel } from '@/types'
 import 'leaflet/dist/leaflet.css'
 
@@ -260,6 +262,8 @@ function buildDivIcon(html: string, size = 22): L.DivIcon {
 }
 
 export default function GISExplorer() {
+  const { user } = useAuth()
+  const canViewOwner = canViewDepartmentRecords(user?.role ?? 'citizen')
   const mapRef = useRef<L.Map | null>(null)
   const mapContainerRef = useRef<HTMLDivElement | null>(null)
   const geoJSONRef = useRef<L.GeoJSON | null>(null)
@@ -966,7 +970,7 @@ export default function GISExplorer() {
                     >
                       <p className="text-xs font-mono text-gov-600">{parcel.ulpin}</p>
                       <p className="text-sm text-slate-900 mt-0.5">{parcel.village}, {parcel.district}, {parcel.state}</p>
-                      <p className="text-xs text-slate-500">{parcel.ownerName} · {parcel.area} {parcel.areaUnit}</p>
+                      <p className="text-xs text-slate-500">{canViewOwner ? `${parcel.ownerName} · ` : ''}{parcel.area} {parcel.areaUnit}</p>
                     </button>
                   )
                 }
@@ -1331,8 +1335,8 @@ export default function GISExplorer() {
                 <InfoRow label="Land Use" value={<StatusBadge status={selectedParcel.landUse} />} isReact />
                 <InfoRow label="Zoning" value={selectedParcel.zoning || '—'} />
                 <InfoRow label="Ownership Status" value={<StatusBadge status={selectedParcel.ownershipStatus} />} isReact />
-                <InfoRow label="Owner" value={selectedParcel.ownerName || 'Demo Owner'} />
-                <InfoRow label="Patta No" value={selectedParcel.pattaNumber || '—'} />
+                {canViewOwner && <InfoRow label="Owner" value={selectedParcel.ownerName || 'Demo Owner'} />}
+                {canViewOwner && <InfoRow label="Patta No" value={selectedParcel.pattaNumber || '—'} />}
                 {buildingActive && (
                   <InfoRow
                     label="Building Permission"

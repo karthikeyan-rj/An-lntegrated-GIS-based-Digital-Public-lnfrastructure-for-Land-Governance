@@ -12,6 +12,7 @@ import analyticsRoutes from './routes/analytics.js'
 import aiRoutes from './routes/ai.js'
 import systemRoutes from './routes/system.js'
 import makeRecordsRouter from './routes/recordsRouter.js'
+import meRoutes from './routes/me.js'
 
 export function createApp() {
   const app = express()
@@ -42,6 +43,9 @@ export function createApp() {
   // GIS / Parcels
   app.use('/api/layers', parcelControllerLayers)
   app.use('/api/parcels', parcelRoutes)
+
+  // Current-user scoped endpoints (own profile, properties, applications)
+  app.use('/api', meRoutes)
 
   // GIS / Administrative boundaries (real Tamil Nadu state/district/taluk geometry)
   app.use('/api/geoboundaries', geoboundariesRoutes)

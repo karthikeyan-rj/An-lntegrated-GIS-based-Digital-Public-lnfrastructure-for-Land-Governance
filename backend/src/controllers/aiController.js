@@ -1,5 +1,7 @@
 import { aiService, geminiState, refreshGeminiState } from '../services/aiService.js'
 import { recordAudit } from '../services/auditService.js'
+import Parcel from '../models/Parcel.js'
+import mongoose from 'mongoose'
 
 /**
  * All AI responses are AI-ASSISTED, meant to aid (never replace) human officers.
@@ -60,11 +62,36 @@ export async function chat(req, res) {
 }
 
 // POST /api/ai/parcel-insights — structured risk/insight analysis for a parcel
+// Server-authoritative: resolves the parcel from MongoDB by ULPIN when possible so
+// the AI is always scoped to real, authorized records and never an arbitrary client blob.
 export async function parcelInsights(req, res) {
   try {
     const { ulpin, parcel } = req.body || {}
-    // Accept either a full parcel object or a ULPIN (looked up through a helper).
-    const payload = parcel && Object.keys(parcel).length ? parcel : { ulpin }
+    let payload = parcel && Object.keys(parcel).length ? { ...parcel } : { ulpin }
+
+    // Prefer the authoritative DB record; only redacts to public-safe field set.
+    if (ulpin) {
+      try {
+        const found = await Parcel.findOne({ ulpin }).lean()
+        if (found) {
+          payload = {
+            ulpin: found.ulpin,
+            surveyNumber: found.surveyNumber,
+            landUse: found.landUse,
+            zoning: found.zoning,
+            area: found.area,
+            ownershipStatus: found.ownershipStatus,
+            encumbranceStatus: found.encumbranceStatus,
+            disputeStatus: found.disputeStatus,
+            propertyTaxStatus: found.propertyTaxStatus,
+            buildingPermission: found.buildingPermission,
+            restrictions: found.restrictions || [],
+            utilities: found.utilities || {},
+          }
+        }
+      } catch (_e) { /* keep payload as provided */ }
+    }
+
     const result = await aiService.parcelInsights({ parcel: payload })
     await recordAudit({ user: req.user, action: 'ai.parcel_insights', resource: 'ai', resourceId: ulpin || payload.ulpin || 'unknown', result: 'success', metadata: { confidence: result.confidence, provider: result.provider }, ip: req.ip })
     res.json(result)

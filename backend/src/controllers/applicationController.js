@@ -4,9 +4,18 @@ import { aiService } from '../services/aiService.js'
 import { workflowService, canActOnDept, deptLabel } from '../services/workflowService.js'
 import { recordAudit } from '../services/auditService.js'
 import { notify } from '../services/notificationService.js'
+import { isOfficer, isAdmin } from '../config/roles.js'
 
 const OFFICERS = ['revenue_officer', 'registration_officer', 'planning_officer', 'tax_officer', 'administrator']
 const ALL = ['citizen', ...OFFICERS]
+
+/** Map an officer role to the Application.department value they may act on. */
+const ROLE_TO_APP_DEPT = {
+  revenue_officer: 'Revenue',
+  registration_officer: 'Registration',
+  planning_officer: 'Planning',
+  tax_officer: 'Tax',
+}
 
 function genApplicationId() {
   return `APL-${Date.now().toString(36).toUpperCase()}${Math.floor(Math.random() * 900 + 100)}`
@@ -88,13 +97,15 @@ export async function createApplication(req, res) {
   }
 }
 
-// GET /api/applications — list filtered by role
+// GET /api/applications — list filtered by role (citizens own, officers by department, admin all)
 export async function listApplications(req, res) {
   try {
     const { status, ulpin, search } = req.query
     const query = {}
     if (req.user.role === 'citizen') {
       query.user = req.user._id
+    } else if (isOfficer(req.user.role) && !isAdmin(req.user.role)) {
+      query.department = ROLE_TO_APP_DEPT[req.user.role]
     }
     if (status) query.status = status
     if (ulpin) query.ulpin = ulpin
@@ -232,6 +243,12 @@ export async function assign(req, res) {
     if (req.user.role === 'citizen') return res.status(403).json({ message: 'Not permitted' })
     const app = await Application.findById(req.params.id)
     if (!app) return res.status(404).json({ message: 'Application not found' })
+
+    if (isOfficer(req.user.role) && !isAdmin(req.user.role) && !canActOnDept(req.user.role, app.department)) {
+      return res.status(403).json({
+        message: `Only the ${deptLabel(req.user.role)} department can assign this ${app.department} application.`,
+      })
+    }
     const { officerId, officerName } = req.body || {}
     if (!officerName && officerId) {
       const officer = await User.findById(officerId).lean()
@@ -240,7 +257,13 @@ export async function assign(req, res) {
     } else if (officerName) {
       app.assigneeName = officerName
     }
-    if (req.body?.department) app.department = req.body.department
+    if (req.body?.department) {
+      // Only the admin may re-route an application across departments.
+      if (!isAdmin(req.user.role)) {
+        return res.status(403).json({ message: 'Only the platform administrator may reassign an application across departments.' })
+      }
+      app.department = req.body.department
+    }
     await app.save()
     await recordAudit({ user: req.user, action: 'application.assign', resource: 'application', resourceId: app.applicationId, result: 'success', metadata: { assignee: app.assigneeName, department: app.department }, ip: req.ip })
     await notify({ user: req.user, recipientRole: 'revenue_officer', title: 'Application assigned', message: `${app.applicationId} assigned to ${app.assigneeName || 'department'}`, link: '/applications', resource: 'application', resourceId: app.applicationId })

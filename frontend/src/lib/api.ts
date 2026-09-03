@@ -72,8 +72,12 @@ export const api = {
   // GIS / Parcels
   parcels: (search?: string) =>
     request<GeoJSON.FeatureCollection>(`/parcels${search ? `?search=${encodeURIComponent(search)}` : ''}`),
-  parcelById: (id: string) => request<{ parcel: any; governance: any }>(`/parcels/${id}`),
+  parcelById: (id: string) => request<{ parcel: any; governance: any; canViewFullRecord?: boolean }>(`/parcels/${id}`),
   parcelGovernance: (id: string) => request<any>(`/parcels/${id}/governance`),
+  publicSearchParcels: (q: string) => request<{ results: any[] }>(`/parcels/search?q=${encodeURIComponent(q)}`),
+  getMyProperties: () => request<{ count: number; properties: any[] }>('/me/properties'),
+  getMyNotifications: () => request<{ count: number; notifications: any[] }>('/me/notifications'),
+  getMyApplications: () => request<{ count: number; applications: any[] }>('/me/applications'),
   layers: () => request<any>('/layers'),
   // Administrative boundaries (real Tamil Nadu state/district/taluk geometry)
   geoboundariesIndex: () => request<any>('/geoboundaries'),

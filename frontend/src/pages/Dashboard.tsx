@@ -3,7 +3,9 @@ import { Link } from 'react-router-dom'
 import L from 'leaflet'
 import { Landmark, BadgeCheck, ClipboardList, Clock, ArrowRight, Map as MapIcon, Brain, Activity } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { isAdmin, canViewDepartmentRecords, ownedParcelIds } from '@/lib/permissions'
 import { StatCard } from '@/components/ui/StatCard'
+import { Button } from '@/components/ui/Button'
 import { StatusBadge } from '@/components/ui/Badge'
 import { api, ApiError } from '@/lib/api'
 import localParcels from '@/data/parcels'
@@ -36,6 +38,15 @@ export default function Dashboard() {
   const [stats, setStats] = useState<{ totalParcels: number; verifiedOwnership: number; activeApplications: number; pendingApprovals: number; isDemo: boolean }>({ totalParcels: 0, verifiedOwnership: 0, activeApplications: 0, pendingApprovals: 0, isDemo: true })
   const [pending, setPending] = useState<any[]>([])
   const [recentActivity, setRecentActivity] = useState<any[]>([])
+  const [scope, setScope] = useState<'own' | 'department' | 'all' | null>(null)
+  const [myProperties, setMyProperties] = useState<any[] | null>(null)
+
+  const scopeLabel = scope === 'own' ? 'Your property activity'
+    : scope === 'department' ? 'Department-scoped activity'
+    : scope === 'all' ? 'System-wide activity'
+    : canViewDepartmentRecords(user?.role ?? 'citizen')
+      ? (isAdmin(user?.role ?? 'citizen') ? 'System-wide activity' : 'Department-scoped activity')
+      : 'Your property activity'
 
   useEffect(() => {
     async function load() {
@@ -43,6 +54,7 @@ export default function Dashboard() {
       try { d = await api.dashboard() } catch { d = null }
       if (d && typeof d.totalParcels === 'number') {
         setStats({ totalParcels: d.totalParcels, verifiedOwnership: d.verifiedOwnership ?? d.digitizedParcels ?? 0, activeApplications: d.activeApplications ?? 0, pendingApprovals: d.pendingApprovals ?? d.pendingMutations ?? 0, isDemo: !!d.isDemo })
+        if (d.scope) setScope(d.scope)
       } else {
         setStats({ totalParcels: localParcels.length, verifiedOwnership: localParcels.filter(p => p.ownershipStatus === 'verified').length, activeApplications: demoRequests.filter(r => !['completed', 'rejected'].includes(r.currentStatus)).length, pendingApprovals: 4, isDemo: true })
       }
@@ -63,9 +75,21 @@ export default function Dashboard() {
       } catch {
         setRecentActivity(auditLogs.slice(0, 6))
       }
+
+      // Citizen's own properties (if applicable)
+      if (user?.role === 'citizen' || !user) {
+        try {
+          const res = await api.getMyProperties()
+          setMyProperties(res.properties || [])
+        } catch {
+          // Demo mode (no backend token): fall back to the local ownership mirror.
+          const ownedIds = ownedParcelIds(user)
+          setMyProperties(localParcels.filter((p: any) => ownedIds.includes(p.id)))
+        }
+      }
     }
     load()
-  }, [])
+  }, [user])
 
   const geoJSON = useMemo(() => ({ type: 'FeatureCollection', features: localParcels.map(parcelToFeature) } as GeoJSON.FeatureCollection), [])
 
@@ -88,6 +112,12 @@ export default function Dashboard() {
         <div>
           <h1 className="text-xl font-bold text-slate-900">Dashboard</h1>
           <p className="text-sm text-slate-500 mt-1">Overview of land-governance activity across the system.</p>
+          {!isAdmin(user?.role ?? 'citizen') && (
+            <span className="inline-flex items-center gap-1.5 mt-2 text-xs font-medium px-2.5 py-1 rounded-full bg-gov-50 text-gov-700 border border-gov-200">
+              <ClipboardList className="w-3.5 h-3.5" />
+              {scopeLabel}
+            </span>
+          )}
         </div>
         {stats.isDemo && <span className="text-xs font-medium px-2.5 py-1 rounded-full bg-amber-100 text-amber-700">DEMO</span>}
       </div>
@@ -114,6 +144,54 @@ export default function Dashboard() {
         </div>
         <div ref={mapContainerRef} className="h-64 bg-slate-100" />
       </div>
+
+      {/* My Properties (citizens) */}
+      {user?.role === 'citizen' && myProperties !== null && (
+        <div className="bg-white border border-slate-200 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Landmark className="w-4 h-4 text-gov-600" />
+              <span className="text-sm font-semibold text-slate-900">My Properties</span>
+            </div>
+            <Link to="/explorer" className="inline-flex items-center gap-1 text-sm text-gov-600 hover:text-gov-700">Search map <ArrowRight className="w-3.5 h-3.5" /></Link>
+          </div>
+          {myProperties.length === 0 ? (
+            <div className="px-5 py-12 text-center">
+              <Landmark className="w-8 h-8 mx-auto text-slate-300" />
+              <p className="mt-3 text-sm text-slate-600">No properties linked to your account yet.</p>
+              <p className="text-sm text-slate-400">Search the map for public parcel information.</p>
+              <Link to="/explorer" className="inline-block mt-4">
+                <Button variant="primary" size="sm"><MapIcon className="w-4 h-4" /> Open Map</Button>
+              </Link>
+            </div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-xs text-slate-500 border-b border-slate-100">
+                    <th className="px-5 py-2.5 font-medium">ULPIN</th>
+                    <th className="px-5 py-2.5 font-medium">Survey</th>
+                    <th className="px-5 py-2.5 font-medium">Village</th>
+                    <th className="px-5 py-2.5 font-medium">Land Use</th>
+                    <th className="px-5 py-2.5 font-medium">Area</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-50">
+                  {myProperties.map((p: any) => (
+                    <tr key={p.id || p.ulpin} className="hover:bg-slate-50">
+                      <td className="px-5 py-3 font-mono text-xs text-gov-700">{p.ulpin}</td>
+                      <td className="px-5 py-3 text-slate-700">{p.surveyNumber}</td>
+                      <td className="px-5 py-3 text-slate-700">{p.village}</td>
+                      <td className="px-5 py-3 capitalize text-slate-700">{p.landUse}</td>
+                      <td className="px-5 py-3 text-slate-700">{p.area} {p.areaUnit}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Applications requiring attention */}

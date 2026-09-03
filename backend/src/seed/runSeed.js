@@ -35,6 +35,9 @@ async function seed() {
     { name: 'Rajesh M', email: 'rajesh.m@planning.gov.in', role: 'planning_officer', department: 'Town Planning Department' },
     { name: 'Arun V', email: 'arun.v@tax.gov.in', role: 'tax_officer', department: 'Property Tax Department' },
     { name: 'System Admin', email: 'admin@landstack.gov.in', role: 'administrator', department: 'Platform Administration' },
+    // Additional demo citizens so ownership isolation / IDOR is demonstrable.
+    { name: 'Meenakshi R', email: 'meenakshi@email.com', role: 'citizen', department: 'Citizen Portal' },
+    { name: 'Selvam R', email: 'selvam@email.com', role: 'citizen', department: 'Citizen Portal' },
   ]
   let users = []
   for (const u of demoUsers) {
@@ -44,12 +47,24 @@ async function seed() {
     }
     users.push(user)
   }
-  const citizen = users.find((u) => u.role === 'citizen')
+  const citizen = users.find((u) => u.email === 'ramanathan@email.com')
+  const citizenB = users.find((u) => u.email === 'meenakshi@email.com')
+  const citizenC = users.find((u) => u.email === 'selvam@email.com')
   console.log(`✔ users: ${users.length} demo users (password for all: demo1234)`)
 
   // 2. Parcels (canonical demo dataset — internally consistent locations)
   await Parcel.deleteMany({ isDemo: true })
   const canonicalById = Object.fromEntries(DEMO_PARCELS.map((p) => [p.id, p]))
+  // Ownership map: canonical demo id → demo citizen user. Owner A owns p1, the
+  // Teppakulam (p11..p15) and Villapuram (p16..p20) clusters; owners B and C own
+  // specific parcels so ownership isolation and IDOR are demonstrable end-to-end.
+  const ownerIdByDemoId = {}
+  for (let i = 11; i <= 20; i++) ownerIdByDemoId[`p${i}`] = citizen._id
+  ownerIdByDemoId['p1'] = citizen._id
+  ownerIdByDemoId['p2'] = citizenB._id
+  ownerIdByDemoId['p8'] = citizenC._id
+  ownerIdByDemoId['p26'] = citizenC._id
+
   const parcelDocs = demoParcelGeoJSON.features.map((f) => {
     const c = canonicalById[f.properties.id] || {}
     return {
@@ -78,6 +93,7 @@ async function seed() {
       restrictions: c.restrictions || [],
       utilities: c.utilities || {},
       isDemo: true,
+      ownerUserId: ownerIdByDemoId[f.properties.id] || null,
       geometry: f.geometry,
     }
   })

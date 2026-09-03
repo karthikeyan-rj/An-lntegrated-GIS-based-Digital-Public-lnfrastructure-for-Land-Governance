@@ -1,14 +1,8 @@
 import mongoose from 'mongoose'
 import bcrypt from 'bcryptjs'
+import { USER_ROLES, ROLES } from '../config/roles.js'
 
-export const USER_ROLES = [
-  'citizen',
-  'revenue_officer',
-  'registration_officer',
-  'planning_officer',
-  'tax_officer',
-  'administrator',
-]
+export { USER_ROLES, ROLES }
 
 const userSchema = new mongoose.Schema(
   {

@@ -1,6 +1,7 @@
 import mongoose from 'mongoose'
 import Parcel from '../models/Parcel.js'
 import { recordAudit } from '../services/auditService.js'
+import { isOfficer, isAdmin } from '../config/roles.js'
 import demoParcelGeoJSON from '../data/demoParcels.js'
 import { DEMO_PARCELS } from '../data/demo/parcels.js'
 
@@ -9,37 +10,41 @@ const dbReady = () => mongoose.connection.readyState === 1
 /** Map ulpin → canonical demo id (p1..p10) so the map links to the right profile. */
 const demoIdByUlpin = Object.fromEntries(DEMO_PARCELS.map((p) => [p.ulpin, p.id]))
 
-/** Build a GeoJSON feature from a DB parcel. */
-function parcelToFeature(p) {
-  return {
-    type: 'Feature',
-    id: demoIdByUlpin[p.ulpin] || p.id || p._id.toString(),
-    properties: {
-      id: demoIdByUlpin[p.ulpin] || p.id || p._id.toString(),
-      ulpin: p.ulpin,
-      surveyNumber: p.surveyNumber,
-      landUse: p.landUse,
-      zoning: p.zoning,
-      area: p.area,
-      areaUnit: p.areaUnit,
-      ownershipStatus: p.ownershipStatus,
-      encumbranceStatus: p.encumbranceStatus,
-      disputeStatus: p.disputeStatus,
-      buildingPermission: p.buildingPermission,
-      propertyTaxStatus: p.propertyTaxStatus,
-      pattaNumber: p.pattaNumber,
-      village: p.village,
-      taluk: p.taluk,
-      district: p.district,
-      state: p.state,
-      ownerName: p.ownerName,
-      verificationStatus: p.verificationStatus,
-      restrictions: p.restrictions || [],
-      utilities: p.utilities || {},
-      isDemo: !!p.isDemo,
-    },
-    geometry: p.geometry,
+/**
+ * Always-public parcel fields. Never includes owner identifiers so the public
+ * map/search never leaks ownership details to citizens or anonymous visitors.
+ */
+const PUBLIC_FIELDS = [
+  'ulpin', 'surveyNumber', 'landUse', 'zoning', 'area', 'areaUnit',
+  'ownershipStatus', 'encumbranceStatus', 'disputeStatus', 'buildingPermission',
+  'propertyTaxStatus', 'pattaNumber', 'village', 'taluk', 'district', 'state',
+  'verificationStatus', 'restrictions', 'utilities', 'isDemo',
+]
+
+/**
+ * True when the requesting user may see private ownership fields
+ * (ownerName / ownerFatherName). Only officers and admins may.
+ */
+function maySeeOwner(req) {
+  return !!req.user && (isOfficer(req.user.role) || isAdmin(req.user.role))
+}
+
+/** Build a GeoJSON feature from a DB parcel, scoped by the requester. */
+function parcelToFeature(p, req) {
+  const id = demoIdByUlpin[p.ulpin] || p.id || p._id.toString()
+  const props = {
+    id,
+    ulpin: p.ulpin,
   }
+  for (const f of PUBLIC_FIELDS) {
+    if (f === 'ulpin') continue
+    props[f] = p[f]
+  }
+  if (maySeeOwner(req)) {
+    props.ownerName = p.ownerName
+    props.ownerFatherName = p.ownerFatherName || ''
+  }
+  return { type: 'Feature', id, properties: props, geometry: p.geometry }
 }
 
 function governanceFallback(ulpin) {
@@ -66,7 +71,7 @@ export async function listParcels(req, res) {
         const query = {}
         if (search) {
           const rx = new RegExp(search, 'i')
-          query.$or = [{ ulpin: rx }, { surveyNumber: rx }, { village: rx }, { taluk: rx }, { district: rx }, { ownerName: rx }]
+          query.$or = [{ ulpin: rx }, { surveyNumber: rx }, { village: rx }, { taluk: rx }, { district: rx }]
         }
         dbParcels = await Parcel.find(query).lean()
       } catch (_e) {
@@ -75,7 +80,7 @@ export async function listParcels(req, res) {
     }
 
     if (dbParcels && dbParcels.length > 0) {
-      return res.json({ type: 'FeatureCollection', features: dbParcels.map(parcelToFeature) })
+      return res.json({ type: 'FeatureCollection', features: dbParcels.map((p) => parcelToFeature(p, req)) })
     }
 
     // Demo fallback layer (applies search to demo features too).
@@ -87,18 +92,64 @@ export async function listParcels(req, res) {
         return [p.ulpin, p.surveyNumber, p.village, p.district, p.state].some((v) => v && rx.test(String(v)))
       })
     }
-    return res.json({ type: 'FeatureCollection', features })
+    const scoped = features.map((f) => {
+      const props = { ...f.properties }
+      if (!maySeeOwner(req)) {
+        delete props.ownerName
+        delete props.ownerFatherName
+      }
+      return { ...f, properties: props }
+    })
+    return res.json({ type: 'FeatureCollection', features: scoped })
   } catch (error) {
     console.error('GET /api/parcels error:', error.message)
-    return res.json(demoParcelGeoJSON)
+    return res.status(500).json({ message: 'Server error' })
   }
+}
+
+// GET /api/parcels/search?q= — public parcel search returning only public fields.
+export async function searchParcels(req, res) {
+  const { q } = req.query
+  if (!q) return res.status(400).json({ message: 'Query param q is required' })
+  const rx = new RegExp(q, 'i')
+  let results = []
+  if (dbReady()) {
+    try {
+      const found = await Parcel.find({
+        $or: [{ ulpin: rx }, { surveyNumber: rx }, { village: rx }, { taluk: rx }, { district: rx }, { state: rx }],
+      })
+        .select(PUBLIC_FIELDS.join(' '))
+        .lean()
+      results = found.map((p) => {
+        const { _id, geometry, __v, ...publicProps } = p
+        publicProps.id = demoIdByUlpin[p.ulpin] || p.id || _id.toString()
+        return publicProps
+      })
+    } catch (_e) {
+      results = []
+    }
+  }
+  if (!results.length) {
+    results = demoParcelGeoJSON.features
+      .map((f) => f.properties)
+      .filter((p) => [p.ulpin, p.surveyNumber, p.village, p.district, p.state].some((v) => v && rx.test(String(v))))
+      .map((p) => {
+        const { ownerName, ownerFatherName, ...publicProps } = p
+        return publicProps
+      })
+  }
+  return res.json({ results })
 }
 
 async function resolveParcel(id) {
   let parcel = null
   if (dbReady()) {
     try {
-      parcel = await Parcel.findOne({ $or: [{ ulpin: id }, { _id: id }] }).lean()
+      // Only add the _id clause when id can legally be an ObjectId; otherwise a
+      // CastError would abort the whole $or query and drop us to the demo layer.
+      const or = [{ ulpin: id }]
+      if (mongoose.isValidObjectId(id)) or.push({ _id: id })
+      parcel = await Parcel.findOne({ $or: or }).lean()
     } catch (_e) {
       parcel = null
     }
@@ -117,6 +168,7 @@ async function resolveParcel(id) {
     areaUnit: props.areaUnit,
     ownershipStatus: props.ownershipStatus,
     ownerName: props.ownerName,
+    ownerUserId: props.ownerUserId || null,
     village: props.village || 'Demo Village',
     taluk: props.taluk || '-',
     district: props.district || 'Demo District',
@@ -131,19 +183,43 @@ async function resolveParcel(id) {
   }
 }
 
-// GET /api/parcels/:id — parcel + governance
+/**
+ * Does the requester have read access to the FULL private parcel record?
+ * Officers and admins always do; a citizen only for parcels they own.
+ */
+function canViewFullParcel(parcel, req) {
+  if (!req.user) return false
+  if (isOfficer(req.user.role) || isAdmin(req.user.role)) return true
+  if (parcel.ownerUserId) return String(parcel.ownerUserId) === String(req.user._id)
+  return false
+}
+
+/** Strip private ownership fields from a parcel for non-owners. */
+function publicView(parcel, req) {
+  const out = { ...parcel }
+  for (const f of ['ownerName', 'ownerFatherName', 'ownerUserId', 'pattaNumber']) delete out[f]
+  out.restricted = true
+  out.restrictedReason = 'You do not own this property and lack officer access to its ownership record'
+  out.canViewOwnership = false
+  if (req.user) out.canViewOwnership = canViewFullParcel(parcel, req)
+  return out
+}
+
+// GET /api/parcels/:id — parcel + governance (role/ownership scoped)
 export async function getParcel(req, res) {
   const { id } = req.params
   try {
     const parcel = await resolveParcel(id)
     if (!parcel) return res.status(404).json({ message: 'Parcel not found' })
+    const full = canViewFullParcel(parcel, req)
+    const view = full ? parcel : publicView(parcel, req)
     const governance = governanceFallback(parcel.ulpin)
 
     if (req.user) {
-      await recordAudit({ user: req.user, action: 'parcel.read', resource: 'parcel', resourceId: parcel.ulpin, result: 'success', ip: req.ip, metadata: { id } })
+      await recordAudit({ user: req.user, action: 'parcel.read', resource: 'parcel', resourceId: parcel.ulpin, result: 'success', ip: req.ip, metadata: { id, full: full ? 'full' : 'public' } })
     }
 
-    res.json({ parcel, governance })
+    res.json({ parcel: view, governance, canViewFullRecord: full })
   } catch (error) {
     console.error('GET /api/parcels/:id error:', error.message)
     res.status(500).json({ message: 'Server error' })
@@ -186,5 +262,5 @@ export function getLayers(_req, res) {
   })
 }
 
-export const parcelController = { listParcels, getParcel, getParcelGovernance, getLayers }
+export const parcelController = { listParcels, searchParcels, getParcel, getParcelGovernance, getLayers }
 export default parcelController

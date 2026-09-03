@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useState, useEffect } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
 import {
   ArrowLeft, MapPin, FileText, Shield, Scale, Building2, Droplets,
@@ -10,6 +10,9 @@ import {
 } from 'lucide-react'
 import { getParcelById } from '@/data/parcels'
 import { registrations, disputes, buildingPermissions, auditLogs, serviceRequests } from '@/data/services'
+import { api } from '@/lib/api'
+import { useAuth } from '@/context/AuthContext'
+import { canViewFullParcel } from '@/lib/permissions'
 import { Button } from '@/components/ui/Button'
 import { Badge, StatusBadge } from '@/components/ui/Badge'
 import { StatCard } from '@/components/ui/StatCard'
@@ -555,6 +558,15 @@ function InfoRow({ label, value, mono, badge }: { label: string; value?: string;
   )
 }
 
+function sanitizeParcel(parcel: Parcel): Parcel {
+  return {
+    ...parcel,
+    ownerName: '—',
+    ownerFatherName: '—',
+    pattaNumber: '—',
+  }
+}
+
 function exportParcel(parcel: Parcel) {
   const blob = new Blob([JSON.stringify(parcel, null, 2)], { type: 'application/json' })
   const url = URL.createObjectURL(blob)
@@ -767,10 +779,38 @@ function AIInsightsTab({ parcel }: { parcel: Parcel }) {
   )
 }
 
+const RESTRICTED_TABS: readonly Tab[] = ['Ownership/RoR', 'Registration', 'Encumbrance', 'Property Tax', 'Disputes', 'Documents', 'AI Insights']
+
 export default function ParcelProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
+  const { user } = useAuth()
   const [activeTab, setActiveTab] = useState<Tab>('Overview')
+  const [restricted, setRestricted] = useState(false)
+  const [restrictedReason, setRestrictedReason] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!id) return
+    const parcelId = id
+    let cancelled = false
+    // Base the restricted flag on role + ownership (works for demo sessions
+    // without a backend token). The backend result is authoritative when reachable.
+    setRestricted(!canViewFullParcel(user, parcelId))
+    async function checkAccess() {
+      try {
+        const res = await api.parcelById(parcelId)
+        if (cancelled) return
+        if (res.canViewFullRecord !== undefined) {
+          setRestricted(res.canViewFullRecord === false)
+          setRestrictedReason((res.parcel as any)?.restrictedReason ?? null)
+        }
+      } catch {
+        if (cancelled) return
+      }
+    }
+    checkAccess()
+    return () => { cancelled = true }
+  }, [id, user])
 
   const parcel = getParcelById(id ?? '')
 
@@ -789,6 +829,10 @@ export default function ParcelProfile() {
       </div>
     )
   }
+
+  const limitedView = restricted
+  const visibleTabs = limitedView ? TABS.filter(t => !RESTRICTED_TABS.includes(t)) : TABS
+  const effectiveTab = visibleTabs.includes(activeTab) ? activeTab : 'Overview'
 
   const tabContent: Record<Tab, React.ReactNode> = {
     Overview: <OverviewTab parcel={parcel} />,
@@ -814,6 +858,19 @@ export default function ParcelProfile() {
       <Button variant="ghost" onClick={() => navigate(-1)}>
         <ArrowLeft className="w-4 h-4" /> Back
       </Button>
+
+      {/* Restricted notice for non-owners */}
+      {limitedView && (
+        <div className="flex items-start gap-3 px-4 py-3 rounded-lg border border-amber-200 bg-amber-50">
+          <ShieldAlert className="w-5 h-5 text-amber-600 mt-0.5 shrink-0" />
+          <div>
+            <p className="text-sm font-medium text-amber-800">Ownership details not available</p>
+            <p className="text-xs text-amber-700 mt-0.5">
+              You do not own this property. {restrictedReason ? restrictedReason : 'Only public parcel information is shown here.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Header Card */}
       <Card noPadding>
@@ -846,14 +903,15 @@ export default function ParcelProfile() {
                 </div>
                 <div className="flex gap-2">
                   <Button variant="secondary" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /> Print</Button>
-                  <Button variant="secondary" size="sm" onClick={() => exportParcel(parcel)}><Download className="w-3.5 h-3.5" /> Export</Button>
+                  <Button variant="secondary" size="sm" onClick={() => exportParcel(limitedView ? sanitizeParcel(parcel) : parcel)}><Download className="w-3.5 h-3.5" /> Export</Button>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">
-                <StatusBadge status={parcel.ownershipStatus} />
+                {!limitedView && <StatusBadge status={parcel.ownershipStatus} />}
+                {!limitedView && <StatusBadge status={parcel.encumbranceStatus} />}
+                {!limitedView && <StatusBadge status={parcel.disputeStatus} />}
+                <StatusBadge status={parcel.landUse} />
                 <StatusBadge status={parcel.verificationStatus} />
-                <StatusBadge status={parcel.encumbranceStatus} />
-                <StatusBadge status={parcel.disputeStatus} />
               </div>
               <div className="mt-4 grid grid-cols-2 sm:grid-cols-4 gap-3 text-sm">
                 <div>
@@ -868,10 +926,12 @@ export default function ParcelProfile() {
                   <p className="text-xs text-slate-500">Coordinates</p>
                   <p className="font-mono text-xs text-slate-900">{parcel.coordinates.lat}, {parcel.coordinates.lng}</p>
                 </div>
-                <div>
-                  <p className="text-xs text-slate-500">Owner</p>
-                  <p className="font-semibold text-slate-900">{parcel.ownerName}</p>
-                </div>
+                {!limitedView && (
+                  <div>
+                    <p className="text-xs text-slate-500">Owner</p>
+                    <p className="font-semibold text-slate-900">{parcel.ownerName}</p>
+                  </div>
+                )}
               </div>
             </div>
           </div>
@@ -881,15 +941,15 @@ export default function ParcelProfile() {
       {/* Summary Cards */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-4 xl:grid-cols-8 gap-3">
         {[
-          { label: 'Ownership', status: parcel.ownershipStatus, icon: Users },
-          { label: 'Land Use', status: parcel.landUse, icon: Home },
-          { label: 'Encumbrance', status: parcel.encumbranceStatus, icon: ShieldAlert },
-          { label: 'Registration', status: parcel.registeredDate ? 'registered' : 'pending', icon: FileText },
-          { label: 'Tax', status: parcel.propertyTaxStatus, icon: CircleDollarSign },
-          { label: 'Dispute', status: parcel.disputeStatus, icon: Scale },
-          { label: 'Building', status: parcel.buildingPermission, icon: Building2 },
-          { label: 'Utilities', status: utilityCount >= 3 ? 'verified' : 'pending', icon: Pipette },
-        ].map((item, i) => (
+          { label: 'Ownership', status: parcel.ownershipStatus, icon: Users, show: !limitedView },
+          { label: 'Land Use', status: parcel.landUse, icon: Home, show: true },
+          { label: 'Encumbrance', status: parcel.encumbranceStatus, icon: ShieldAlert, show: !limitedView },
+          { label: 'Registration', status: parcel.registeredDate ? 'registered' : 'pending', icon: FileText, show: true },
+          { label: 'Tax', status: parcel.propertyTaxStatus, icon: CircleDollarSign, show: !limitedView },
+          { label: 'Dispute', status: parcel.disputeStatus, icon: Scale, show: !limitedView },
+          { label: 'Building', status: parcel.buildingPermission, icon: Building2, show: true },
+          { label: 'Utilities', status: utilityCount >= 3 ? 'verified' : 'pending', icon: Pipette, show: true },
+        ].filter(item => item.show).map((item, i) => (
           <div key={i} className="card p-3 flex flex-col items-center text-center gap-1.5">
             <item.icon className="w-5 h-5 text-slate-400" />
             <p className="text-[10px] font-medium text-slate-500 uppercase">{item.label}</p>
@@ -901,13 +961,13 @@ export default function ParcelProfile() {
       {/* Tab Navigation */}
       <div className="border-b border-slate-200">
         <div className="flex gap-0 overflow-x-auto -mb-px">
-          {TABS.map(tab => (
+          {visibleTabs.map(tab => (
             <button
               key={tab}
               onClick={() => setActiveTab(tab)}
               className={cn(
                 'px-4 py-3 text-sm font-medium whitespace-nowrap border-b-2 transition-colors -mb-px',
-                activeTab === tab
+                effectiveTab === tab
                   ? 'border-gov-600 text-gov-700'
                   : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
               )}
@@ -919,7 +979,7 @@ export default function ParcelProfile() {
       </div>
 
       {/* Tab Content */}
-      <div>{tabContent[activeTab]}</div>
+      <div>{tabContent[effectiveTab]}</div>
     </div>
   )
 }

@@ -3,34 +3,55 @@ import {
   Application, Dispute, LandRecord, Registration, Encumbrance,
 } from '../models/LandModels.js'
 import Parcel from '../models/Parcel.js'
+import { isOfficer, isAdmin } from '../config/roles.js'
 
 const dbReady = () => mongoose.connection && mongoose.connection.readyState === 1
 
+const ROLE_TO_APP_DEPT = {
+  revenue_officer: 'Revenue',
+  registration_officer: 'Registration',
+  planning_officer: 'Planning',
+  tax_officer: 'Tax',
+}
+
 /**
  * GET /api/analytics/dashboard — Command Center KPIs + recent activity.
- * Falls back to demo-safe numbers when the DB is unavailable so the dashboard
- * still renders, but flags `isDemo`.
+ * Role-aware: citizens see only their own parcels/applications, officers see
+ * department-scoped data, and the admin sees system-wide totals. Falls back to
+ * demo-safe numbers when the DB is unavailable so the dashboard still renders.
  */
 export async function dashboard(req, res) {
   try {
     let data = null
     let isDemo = false
 
+    const role = req.user && req.user.role
+    const isCitizen = role === 'citizen'
+    const isOfficerRole = isOfficer(role)
+    const isAdminRole = isAdmin(role)
+
     if (dbReady()) {
       try {
+        // Restrict parcel + application counts by ownership / department scope.
+        const parcelFilter = isCitizen ? { ownerUserId: req.user._id } : {}
+        const appFilter = {}
+        if (isCitizen) appFilter.user = req.user._id
+        else if (isOfficerRole && !isAdminRole) appFilter.department = ROLE_TO_APP_DEPT[role]
+
         const [totalParcels, digitizedParcels, verifiedOwnership, activeApplications, pendingMutations, activeDisputes, pendingApprovals] = await Promise.all([
-          Parcel.countDocuments({}).catch(() => 0),
-          Parcel.countDocuments({ verificationStatus: 'digitally_verified' }).catch(() => 0),
-          Parcel.countDocuments({ ownershipStatus: 'verified' }).catch(() => 0),
-          Application.countDocuments({ status: { $nin: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT'] } }).catch(() => 0),
-          LandRecord.countDocuments({ verificationStatus: 'pending_verification' }).catch(() => 0),
-          Dispute.countDocuments({ status: 'active' }).catch(() => 0),
-          Application.countDocuments({ status: { $in: ['UNDER_REVIEW', 'DOCUMENT_VERIFICATION', 'FIELD_VERIFICATION'] } }).catch(() => 0),
+          Parcel.countDocuments(parcelFilter).catch(() => 0),
+          Parcel.countDocuments({ ...parcelFilter, verificationStatus: 'digitally_verified' }).catch(() => 0),
+          Parcel.countDocuments({ ...parcelFilter, ownershipStatus: 'verified' }).catch(() => 0),
+          Application.countDocuments({ ...appFilter, status: { $nin: ['APPROVED', 'REJECTED', 'CANCELLED', 'DRAFT'] } }).catch(() => 0),
+          isCitizen ? 0 : LandRecord.countDocuments({ verificationStatus: 'pending_verification' }).catch(() => 0),
+          isCitizen ? 0 : Dispute.countDocuments({ status: 'active' }).catch(() => 0),
+          Application.countDocuments({ ...appFilter, status: { $in: ['UNDER_REVIEW', 'DOCUMENT_VERIFICATION', 'FIELD_VERIFICATION'] } }).catch(() => 0),
         ])
         data = {
           totalParcels, digitizedParcels, verifiedOwnership, activeApplications, pendingMutations, activeDisputes, pendingApprovals,
-          recentApplications: await Application.find().sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
-          recentTransactions: await Registration.find().sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
+          recentApplications: await Application.find(appFilter).sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
+          recentTransactions: isCitizen ? [] : await Registration.find().sort({ createdAt: -1 }).limit(6).lean().catch(() => []),
+          scope: isCitizen ? 'own' : isOfficerRole && !isAdminRole ? 'department' : 'all',
         }
       } catch (_e) {
         data = null
@@ -39,16 +60,18 @@ export async function dashboard(req, res) {
 
     if (!data) {
       isDemo = true
+      const scope = isCitizen ? 'own' : (isOfficerRole && !isAdminRole) ? 'department' : 'all'
       data = {
-        totalParcels: 1280,
-        digitizedParcels: 1256,
-        verifiedOwnership: 1180,
-        activeApplications: 42,
-        pendingMutations: 12,
-        activeDisputes: 7,
-        pendingApprovals: 18,
+        totalParcels: isCitizen ? 0 : 1280,
+        digitizedParcels: isCitizen ? 0 : 1256,
+        verifiedOwnership: isCitizen ? 0 : 1180,
+        activeApplications: 0,
+        pendingMutations: isCitizen ? 0 : 12,
+        activeDisputes: isCitizen ? 0 : 7,
+        pendingApprovals: 0,
         recentApplications: [],
         recentTransactions: [],
+        scope,
       }
     }
 

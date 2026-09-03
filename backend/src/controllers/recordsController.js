@@ -37,22 +37,27 @@ function makeList(singular, resource) {
   return async (req, res) => {
     try {
       const { ulpin } = req.query
+      const scopedUlpins = req.query.__scoped_ulpins
+      const scopedSet = scopedUlpins ? new Set(scopedUlpins) : null
+      const withinScope = (r) => !scopedSet || scopedSet.has(r.ulpin)
+
       const query = {}
       if (ulpin) {
-        const demo = demoFor(key).filter((r) => r.ulpin === ulpin)
+        const demo = demoFor(key).filter((r) => r.ulpin === ulpin && withinScope(r))
         if (demo.length) return res.json({ [key]: demo, count: demo.length, isDemo: true })
         query.ulpin = ulpin
       }
+      if (scopedSet) query.ulpin = { $in: Array.from(scopedSet) }
       let rows = []
       try {
         rows = await model.find(query).sort({ createdAt: -1 }).lean()
       } catch (_e) {
         rows = []
       }
-      let out = rows
+      let out = rows.filter(withinScope)
       let isDemo = false
       if (!out.length) {
-        out = demoFor(key).filter((r) => !ulpin || r.ulpin === ulpin)
+        out = demoFor(key).filter((r) => (!ulpin || r.ulpin === ulpin) && withinScope(r))
         isDemo = true
       }
       if (req.user) {
@@ -71,9 +76,13 @@ function makeGetByUlpin(singular, resource) {
   return async (req, res) => {
     try {
       const { ulpin } = req.params
+      // Citizens may only read records of ULPINs they own.
+      if (req.scopedUlpins && !req.scopedUlpins.has(ulpin)) {
+        return res.status(403).json({ message: 'Access denied — this record belongs to a ULPIN you do not own' })
+      }
       let row = null
       try {
-        row = await model.findOne({ ulpin }).lean()
+        row = (await model.find({ ulpin }).lean())[0] || null
       } catch (_e) {
         row = null
       }
