@@ -1,5 +1,5 @@
 import { useState, useMemo, useCallback, useEffect, useRef } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams } from 'react-router-dom'
 import L from 'leaflet'
 import {
   Search,
@@ -21,7 +21,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
 import { cn } from '@/lib/utils'
 import { api } from '@/lib/api'
-import { searchParcels } from '@/data/parcels'
+import { searchParcels, getParcelById } from '@/data/parcels'
 import localParcels from '@/data/parcels'
 import type { Parcel } from '@/types'
 import 'leaflet/dist/leaflet.css'
@@ -166,6 +166,7 @@ export default function GISExplorer() {
   const [showCoreLayers, setShowCoreLayers] = useState(true)
   const [showGovernanceLayers, setShowGovernanceLayers] = useState(false)
   const [showInfraLayers, setShowInfraLayers] = useState(false)
+  const [params] = useSearchParams()
 
   // Load parcel GeoJSON from backend (/api/parcels), fall back to local demo data.
   useEffect(() => {
@@ -272,13 +273,18 @@ export default function GISExplorer() {
       geoJSONRef.current = null
     }
 
+    const landUseActive = governanceLayers.find(l => l.id === 'landUse')?.checked ?? false
     const layer = L.geoJSON(parcelFeatureCollection, {
-      style: () => ({
-        color: '#1d4ed8',
-        weight: 1.5,
-        fillColor: '#3b82f6',
-        fillOpacity: 0.25,
-      }),
+      style: (feature) => {
+        const lu = String(((feature?.properties || {}) as Record<string, unknown>).landUse || '')
+        const fill = landUseActive ? getLandUseColor(lu) : '#3b82f6'
+        return {
+          color: landUseActive ? getLandUseColor(lu) : '#1d4ed8',
+          weight: landUseActive ? 1 : 1.5,
+          fillColor: fill,
+          fillOpacity: landUseActive ? 0.55 : 0.25,
+        }
+      },
       onEachFeature: (feature, lyr) => {
         const p = (feature.properties || {}) as Record<string, unknown>
         const label = String(p.surveyNumber || '')
@@ -305,7 +311,7 @@ export default function GISExplorer() {
     if (!map.getBounds().isValid()) {
       map.fitBounds(layer.getBounds(), { padding: [30, 30], maxZoom: 11 })
     }
-  }, [parcelFeatureCollection])
+  }, [parcelFeatureCollection, governanceLayers])
 
   // Highlight / reset the selected parcel.
   useEffect(() => {
@@ -353,6 +359,16 @@ export default function GISExplorer() {
     }
   }, [])
 
+  // Support deep-link: /explorer?parcel=ID selects and focuses a parcel from its profile page.
+  const parcelParam = params.get('parcel')
+  const initialParcelConsumed = useRef(false)
+  useEffect(() => {
+    if (initialParcelConsumed.current || !parcelParam) return
+    const parcel = getParcelById(parcelParam)
+    if (parcel) handleResultClick(parcel)
+    initialParcelConsumed.current = true
+  }, [parcelParam, handleResultClick])
+
   const zoomToParcel = useCallback((parcel: Parcel) => {
     const map = mapRef.current
     if (map && parcel.coordinates.lat) {
@@ -360,10 +376,8 @@ export default function GISExplorer() {
     }
   }, [])
 
-  // Placeholder governance layers (not drawn with real data — labeled DEMO).
-  const enableUnavailableLayer = useCallback(() => {
-    setLoadError('This governance layer is a DEMO placeholder. Real department data is not connected yet.')
-  }, [])
+  const landUseActive = governanceLayers.find(l => l.id === 'landUse')?.checked ?? false
+  const activeGovernanceCount = governanceLayers.filter(l => l.checked).length
 
   return (
     <div className="flex flex-col lg:flex-row h-[calc(100vh-190px)] min-h-[560px] rounded-2xl overflow-hidden bg-white border border-slate-200 shadow-sm">
@@ -486,7 +500,7 @@ export default function GISExplorer() {
                     <input
                       type="checkbox"
                       checked={layer.checked}
-                      onChange={() => { toggleLayer(setGovernanceLayers)(layer.id); enableUnavailableLayer() }}
+                      onChange={() => toggleLayer(setGovernanceLayers)(layer.id)}
                       className="w-3.5 h-3.5 rounded text-gov-600 focus:ring-gov-500"
                     />
                     {layer.checked ? <Eye className="w-3.5 h-3.5 text-gov-500" /> : <EyeOff className="w-3.5 h-3.5 text-slate-300" />}
@@ -514,7 +528,7 @@ export default function GISExplorer() {
                     <input
                       type="checkbox"
                       checked={layer.checked}
-                      onChange={() => { toggleLayer(setInfraLayers)(layer.id); enableUnavailableLayer() }}
+                      onChange={() => toggleLayer(setInfraLayers)(layer.id)}
                       className="w-3.5 h-3.5 rounded text-gov-600 focus:ring-gov-500"
                     />
                     {layer.checked ? <Eye className="w-3.5 h-3.5 text-gov-500" /> : <EyeOff className="w-3.5 h-3.5 text-slate-300" />}
@@ -563,21 +577,37 @@ export default function GISExplorer() {
 
         {/* Legend */}
         <div className="absolute left-3 bottom-8 bg-white/90 backdrop-blur-sm rounded-lg shadow-md p-3 z-[500]">
-          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">Land Use</p>
-          <div className="space-y-1.5">
-            {[
-              { label: 'Residential', color: '#3b82f6' },
-              { label: 'Commercial', color: '#f59e0b' },
-              { label: 'Agricultural', color: '#22c55e' },
-              { label: 'Industrial', color: '#8b5cf6' },
-              { label: 'Forest', color: '#166534' },
-            ].map((item) => (
-              <div key={item.label} className="flex items-center gap-2">
-                <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: item.color }} />
-                <span className="text-[10px] text-slate-600">{item.label}</span>
-              </div>
-            ))}
-          </div>
+          <p className="text-[10px] font-semibold text-slate-600 uppercase tracking-wider mb-2">
+            {landUseActive ? 'Land Use' : 'Legend'}
+          </p>
+          {landUseActive ? (
+            <div className="space-y-1.5">
+              {[
+                { label: 'Residential', color: '#3b82f6' },
+                { label: 'Commercial', color: '#f59e0b' },
+                { label: 'Agricultural', color: '#22c55e' },
+                { label: 'Industrial', color: '#8b5cf6' },
+                { label: 'Institutional', color: '#06b6d4' },
+                { label: 'Forest', color: '#166534' },
+                { label: 'Mixed', color: '#ec4899' },
+              ].map((item) => (
+                <div key={item.label} className="flex items-center gap-2">
+                  <div className="w-3 h-3 rounded-sm" style={{ backgroundColor: item.color }} />
+                  <span className="text-[10px] text-slate-600">{item.label}</span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-3 rounded-sm bg-gov-500" />
+              <span className="text-[10px] text-slate-600">Demo parcel boundary</span>
+            </div>
+          )}
+          {activeGovernanceCount > 0 && !landUseActive && (
+            <p className="text-[9px] text-slate-400 mt-2 max-w-[160px]">
+              {activeGovernanceCount} governance layer{activeGovernanceCount > 1 ? 's' : ''} active (demo overlay)
+            </p>
+          )}
         </div>
       </div>
 
@@ -624,20 +654,26 @@ export default function GISExplorer() {
               <Link to={`/parcel/${selectedParcel.id}`} className="block">
                 <Button variant="primary" size="md" className="w-full">
                   <Home className="w-4 h-4" />
-                  View Complete Parcel
+                  View Parcel Profile
                 </Button>
               </Link>
-              <Button variant="secondary" size="md" className="w-full" onClick={() => zoomToParcel(selectedParcel)}>
+              <div className="grid grid-cols-2 gap-2">
+                <Link to={`/services?ulpin=${encodeURIComponent(selectedParcel.ulpin)}`}>
+                  <Button variant="secondary" size="sm" className="w-full">
+                    <FileText className="w-4 h-4" />
+                    Request Service
+                  </Button>
+                </Link>
+                <Link to={`/land-records?ulpin=${encodeURIComponent(selectedParcel.ulpin)}`}>
+                  <Button variant="secondary" size="sm" className="w-full">
+                    <Shield className="w-4 h-4" />
+                    Land Records
+                  </Button>
+                </Link>
+              </div>
+              <Button variant="ghost" size="sm" className="w-full" onClick={() => zoomToParcel(selectedParcel)}>
                 <MapIcon className="w-4 h-4" />
                 Zoom to Parcel
-              </Button>
-              <Button variant="secondary" size="md" className="w-full">
-                <Shield className="w-4 h-4" />
-                Verify Ownership
-              </Button>
-              <Button variant="secondary" size="md" className="w-full">
-                <FileText className="w-4 h-4" />
-                View Documents
               </Button>
             </div>
           </>

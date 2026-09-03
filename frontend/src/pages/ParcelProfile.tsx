@@ -6,9 +6,10 @@ import {
   Download, Eye, ExternalLink, Landmark, DollarSign, Home, Map,
   Users, BookOpen, FolderOpen, History, Search, Printer, Tag,
   CircleDollarSign, Pipette, Hammer, Receipt, UtilityPole, ShieldAlert,
+  Brain, ListChecks,
 } from 'lucide-react'
 import { getParcelById } from '@/data/parcels'
-import { registrations, disputes, buildingPermissions, auditLogs } from '@/data/services'
+import { registrations, disputes, buildingPermissions, auditLogs, serviceRequests } from '@/data/services'
 import { Button } from '@/components/ui/Button'
 import { Badge, StatusBadge } from '@/components/ui/Badge'
 import { StatCard } from '@/components/ui/StatCard'
@@ -20,7 +21,7 @@ import type { Parcel } from '@/types'
 const TABS = [
   'Overview', 'Ownership/RoR', 'Registration', 'Encumbrance', 'Land Use',
   'Building Permissions', 'Property Tax', 'Utilities', 'Restrictions',
-  'Disputes', 'Documents', 'Activity Timeline',
+  'Disputes', 'Documents', 'Applications', 'AI Insights', 'Activity Timeline',
 ] as const
 
 type Tab = (typeof TABS)[number]
@@ -551,6 +552,108 @@ function InfoRow({ label, value, mono, badge }: { label: string; value?: string;
   )
 }
 
+function exportParcel(parcel: Parcel) {
+  const blob = new Blob([JSON.stringify(parcel, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `${parcel.ulpin}-parcel.json`
+  a.click()
+  URL.revokeObjectURL(url)
+}
+
+function ApplicationsTab({ parcel }: { parcel: Parcel }) {
+  const apps = serviceRequests.filter(r => r.ulpin === parcel.ulpin)
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-sm font-semibold text-slate-900">Applications for this Parcel</h3>
+        <Link to={`/services?ulpin=${parcel.ulpin}`}>
+          <Button size="sm"><ListChecks className="w-3.5 h-3.5" /> Request a Service</Button>
+        </Link>
+      </div>
+      {apps.length > 0 ? (
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-100">
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase">Service</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase">Applicant</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase">Filed</th>
+                <th className="text-left py-3 px-4 text-xs font-medium text-slate-500 uppercase">Status</th>
+              </tr>
+            </thead>
+            <tbody>
+              {apps.map(a => (
+                <tr key={a.id} className="border-b border-slate-50 hover:bg-slate-50">
+                  <td className="py-3 px-4 font-medium text-slate-900">{a.serviceName}</td>
+                  <td className="py-3 px-4 text-slate-600">{a.applicantName}</td>
+                  <td className="py-3 px-4 text-slate-600">{a.submittedDate}</td>
+                  <td className="py-3 px-4"><StatusBadge status={a.currentStatus} /></td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <EmptyState icon={<ListChecks className="w-6 h-6" />} title="No Applications" description="No service applications found for this parcel yet." />
+      )}
+    </div>
+  )
+}
+
+function AIInsightsTab({ parcel }: { parcel: Parcel }) {
+  const insights: { title: string; detail: string; severity: 'high' | 'medium' | 'low' }[] = []
+  const confidence = 82
+
+  if (parcel.ownershipStatus === 'pending') {
+    insights.push({ title: 'Ownership unverified', detail: 'Ownership has not been verified against sub-registrar and revenue records. Transactions may carry title risk.', severity: 'high' })
+  }
+  if (parcel.disputeStatus === 'active') {
+    insights.push({ title: 'Active dispute', detail: `An active dispute (${parcel.disputeCaseId || 'pending case'}) is registered. A transaction hold is recommended.`, severity: 'high' })
+  }
+  if (parcel.propertyTaxStatus === 'pending' || parcel.propertyTaxStatus === 'overdue') {
+    insights.push({ title: 'Outstanding property tax', detail: `Tax of ${formatCurrency(parcel.taxAmount ?? 0)} is outstanding. A tax clearance may be required before registration.`, severity: 'medium' })
+  }
+  if (parcel.encumbranceStatus === 'mortgaged' || parcel.encumbranceStatus === 'encumbered') {
+    insights.push({ title: 'Parcel encumbered', detail: 'The parcel carries an encumbrance / mortgage. Obtain an updated Encumbrance Certificate or bank NOC.', severity: 'medium' })
+  }
+  if (parcel.restrictions.length > 0) {
+    insights.push({ title: `${parcel.restrictions.length} restriction(s) apply`, detail: parcel.restrictions.join(', '), severity: 'low' })
+  }
+  if (insights.length === 0) {
+    insights.push({ title: 'Parcel appears clear', detail: 'Ownership verified, no active dispute, tax paid, no encumbrance. No immediate action required.', severity: 'low' })
+  }
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-amber-50 border border-amber-200">
+        <AlertTriangle className="w-4 h-4 text-amber-600" />
+        <p className="text-xs font-medium text-amber-700">AI-ASSISTED · requires human verification · confidence {confidence}%</p>
+      </div>
+      <Card title="Parcel Risk Assessment" subtitle="Automated review of governance records for this parcel">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="flex-1 h-2 bg-slate-100 rounded-full overflow-hidden">
+            <div className="h-full bg-emerald-500 rounded-full" style={{ width: `${confidence}%` }} />
+          </div>
+          <span className="text-sm font-semibold text-slate-700 tabular-nums">Clearance {confidence}%</span>
+        </div>
+        <div className="space-y-3">
+          {insights.map((ins, i) => (
+            <div key={i} className="flex gap-3 p-3 rounded-lg border border-slate-100 bg-slate-50/50">
+              <div className={cn('mt-1 w-2 h-2 rounded-full shrink-0', ins.severity === 'high' ? 'bg-red-500' : ins.severity === 'medium' ? 'bg-amber-500' : 'bg-emerald-500')} />
+              <div>
+                <p className="text-sm font-semibold text-slate-900 flex items-center gap-1.5"><Brain className="w-3.5 h-3.5 text-gov-600" /> {ins.title}</p>
+                <p className="text-sm text-slate-600 mt-0.5">{ins.detail}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 export default function ParcelProfile() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -586,6 +689,8 @@ export default function ParcelProfile() {
     Restrictions: <RestrictionsTab parcel={parcel} />,
     Disputes: <DisputesTab parcel={parcel} />,
     Documents: <DocumentsTab parcel={parcel} />,
+    Applications: <ApplicationsTab parcel={parcel} />,
+    'AI Insights': <AIInsightsTab parcel={parcel} />,
     'Activity Timeline': <ActivityTimelineTab parcel={parcel} />,
   }
 
@@ -610,7 +715,7 @@ export default function ParcelProfile() {
                 <p className="text-xs font-mono text-gov-800">{parcel.coordinates.lng.toFixed(4)}°E</p>
               </div>
               <div className="absolute bottom-2 right-2">
-                <Button variant="secondary" size="sm">
+                <Button variant="secondary" size="sm" onClick={() => navigate(`/explorer?parcel=${parcel.id}`)}>
                   <ExternalLink className="w-3 h-3" /> Full Map
                 </Button>
               </div>
@@ -627,8 +732,8 @@ export default function ParcelProfile() {
                   </p>
                 </div>
                 <div className="flex gap-2">
-                  <Button variant="secondary" size="sm"><Printer className="w-3.5 h-3.5" /> Print</Button>
-                  <Button variant="secondary" size="sm"><Download className="w-3.5 h-3.5" /> Export</Button>
+                  <Button variant="secondary" size="sm" onClick={() => window.print()}><Printer className="w-3.5 h-3.5" /> Print</Button>
+                  <Button variant="secondary" size="sm" onClick={() => exportParcel(parcel)}><Download className="w-3.5 h-3.5" /> Export</Button>
                 </div>
               </div>
               <div className="mt-4 flex flex-wrap gap-2">

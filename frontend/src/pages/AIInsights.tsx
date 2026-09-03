@@ -1,283 +1,702 @@
-import { useState } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import {
-  Brain, AlertTriangle, Eye, Shield, Scan, Search, ChevronRight,
-  MapPin, TrendingUp, DollarSign, AlertOctagon, Zap
+  Brain,
+  AlertTriangle,
+  Search,
+  FileSearch,
+  Loader2,
+  ShieldCheck,
+  CheckCircle2,
+  XCircle,
+  ChevronDown,
 } from 'lucide-react'
-import { Card } from '@/components/ui/Card'
-import { CardGrid } from '@/components/ui/Card'
-import { StatCard } from '@/components/ui/StatCard'
-import { Badge, StatusBadge } from '@/components/ui/Badge'
+import { StatusBadge } from '@/components/ui/Badge'
 import { Button } from '@/components/ui/Button'
-import { aiInsights } from '@/data/services'
 import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
+import { searchParcels } from '@/data/parcels'
+import { serviceRequests } from '@/data/services'
+import type { Parcel, ServiceRequest } from '@/types'
 
-const typeIcons: Record<string, React.ElementType> = {
-  change_detection: Scan,
-  ownership_anomaly: Shield,
-  land_use_change: MapPin,
-  fraud_risk: AlertOctagon,
-  encroachment: Eye,
+/* ------------------------------------------------------------------ */
+/*  Local types                                                        */
+/* ------------------------------------------------------------------ */
+
+interface ParcelInsight {
+  title: string
+  description: string
+  confidence: number
+  severity: 'high' | 'medium' | 'low'
+  action: string
 }
 
-const typeLabels: Record<string, string> = {
-  change_detection: 'Change Detection',
-  ownership_anomaly: 'Ownership Anomaly',
-  land_use_change: 'Land Use Change',
-  fraud_risk: 'Fraud Risk',
-  encroachment: 'Encroachment',
+interface AppReview {
+  summary: string
+  requiredDocs: string[]
+  providedDocs: string[]
+  missingDocs: string[]
+  issues: string[]
+  confidence: number
+  recommendation: string
 }
 
-const severityColors: Record<string, string> = {
-  high: 'red',
-  medium: 'amber',
-  low: 'slate',
+/* ------------------------------------------------------------------ */
+/*  Deterministic parcel-insight generator                             */
+/* ------------------------------------------------------------------ */
+
+function computeParcelInsights(parcel: Parcel): ParcelInsight[] {
+  const insights: ParcelInsight[] = []
+
+  if (parcel.ownershipStatus === 'pending') {
+    insights.push({
+      title: 'Ownership Verification Pending',
+      description: `Ownership for parcel ${parcel.ulpin} (${parcel.surveyNumber}, ${parcel.village}) is pending. Registered claimant "${parcel.ownerName}" has not been fully validated against revenue records.`,
+      confidence: 92,
+      severity: 'high',
+      action: 'Initiate ownership verification through Revenue Department. Cross-check with sub-registrar records and Aadhaar authentication.',
+    })
+  }
+
+  if (parcel.disputeStatus === 'active') {
+    insights.push({
+      title: 'Active Dispute on Parcel',
+      description: `An active dispute (${parcel.disputeCaseId || 'pending assignment'}) is registered against this parcel. Any transaction, mutation, or permission may be affected by ongoing court proceedings.`,
+      confidence: 98,
+      severity: 'high',
+      action: 'Place a transaction hold. Verify case status with Judiciary API before processing any application.',
+    })
+  }
+
+  if (parcel.disputeStatus === 'under_review') {
+    insights.push({
+      title: 'Dispute Under Review',
+      description: `A dispute involving this parcel is currently under judicial review. Transactions may proceed with caution but carry residual risk.`,
+      confidence: 82,
+      severity: 'medium',
+      action: 'Monitor dispute status. Require applicant disclosure of pending litigation.',
+    })
+  }
+
+  if (parcel.propertyTaxStatus === 'pending') {
+    insights.push({
+      title: 'Property Tax Outstanding',
+      description: `Property tax of ₹${(parcel.taxAmount ?? 0).toLocaleString('en-IN')} is pending for this parcel. Outstanding tax may affect transaction eligibility and mutation applications.`,
+      confidence: 95,
+      severity: 'medium',
+      action: 'Verify tax clearance with Property Tax Department. Flag for tax clearance certificate before any registration.',
+    })
+  }
+
+  if (parcel.propertyTaxStatus === 'overdue') {
+    insights.push({
+      title: 'Property Tax Significantly Overdue',
+      description: `Property tax is overdue beyond the grace period. This may indicate neglect, ownership dispute, or fraudulent occupation.`,
+      confidence: 96,
+      severity: 'high',
+      action: 'Escalate to Tax Officer. Tax clearance certificate mandatory before processing any application.',
+    })
+  }
+
+  if (parcel.encumbranceStatus === 'mortgaged') {
+    insights.push({
+      title: 'Active Mortgage Encumbrance',
+      description: `This parcel is mortgaged with ${parcel.mortgageBank ?? 'a financial institution'} for ₹${(parcel.mortgageAmount ?? 0).toLocaleString('en-IN')}. Ownership transfer requires lender No-Objection Certificate.`,
+      confidence: 97,
+      severity: 'high',
+      action: 'Request mortgage clearance certificate or bank NOC from the lending institution before any ownership transfer.',
+    })
+  }
+
+  if (parcel.encumbranceStatus === 'encumbered') {
+    insights.push({
+      title: 'General Encumbrance Detected',
+      description: `This parcel carries an active encumbrance that may restrict transfers. Details need verification with the Registration Department.`,
+      confidence: 88,
+      severity: 'medium',
+      action: 'Obtain updated Encumbrance Certificate from the Sub-Registrar Office.',
+    })
+  }
+
+  if (parcel.landUse === 'agricultural' && parcel.buildingPermission !== 'none') {
+    insights.push({
+      title: 'Land-Use vs Building Permission Mismatch',
+      description: `Parcel is zoned agricultural (${parcel.zoning}) but carries a building permission (${parcel.buildingPermission}). This may indicate unauthorized non-agricultural conversion.`,
+      confidence: 85,
+      severity: 'high',
+      action: 'Verify if land conversion permission was obtained from Town Planning. Check for Section 144 consent from Collector.',
+    })
+  }
+
+  if (parcel.landUse === 'forest') {
+    insights.push({
+      title: 'Reserved Forest Classification',
+      description: `Parcel is classified as "${parcel.classification}" under the Forest Conservation Act, 1980. Construction, deforestation, and private transaction are prohibited without Forest Department approval.`,
+      confidence: 99,
+      severity: 'high',
+      action: 'Ensure Forest Department NOC is obtained for any proposed activity. Verify compliance with Forest Rights Act, 2006.',
+    })
+  }
+
+  if (parcel.ownershipStatus === 'pending' && parcel.disputeStatus === 'active') {
+    insights.push({
+      title: 'Compound Risk — Unresolved Ownership + Active Dispute',
+      description: `This parcel simultaneously has unverified ownership and an active dispute (${parcel.disputeCaseId}). This compound condition represents the highest risk profile for any transaction.`,
+      confidence: 94,
+      severity: 'high',
+      action: 'Place complete transaction hold. Escalate to District Collector for priority review.',
+    })
+  }
+
+  if (parcel.restrictions.length > 0) {
+    const critical = parcel.restrictions.some(
+      (r) =>
+        r.toLowerCase().includes('no construction') ||
+        r.toLowerCase().includes('no private') ||
+        r.toLowerCase().includes('protected') ||
+        r.toLowerCase().includes('heritage'),
+    )
+    if (critical) {
+      insights.push({
+        title: 'Critical Restrictions Active',
+        description: `${parcel.restrictions.length} restriction(s) apply: ${parcel.restrictions.join('; ')}. These directly affect permitted use and transferability.`,
+        confidence: 90,
+        severity: 'medium',
+        action: 'Review all applicable restrictions before processing. Consult the relevant controlling department.',
+      })
+    }
+  }
+
+  if (parcel.ownershipStatus === 'verified' && parcel.disputeStatus === 'none' && parcel.encumbranceStatus === 'clear' && parcel.propertyTaxStatus === 'paid') {
+    insights.push({
+      title: 'No Anomalies Detected',
+      description: `Parcel ${parcel.ulpin} shows consistent records across ownership, encumbrance, tax, and dispute databases. No anomalies detected in current analysis.`,
+      confidence: 91,
+      severity: 'low',
+      action: 'No immediate action required. Continue standard periodic monitoring.',
+    })
+  }
+
+  return insights
 }
 
-const decisionCards = [
-  {
-    icon: AlertTriangle,
-    title: 'High-Risk Parcels',
-    count: 7,
-    color: 'text-red-600',
-    bgColor: 'bg-red-50',
-    why: 'Multiple AI models flagged these parcels due to rapid ownership transfers, unusual transaction patterns, or discrepancies between registered data and satellite imagery. These require immediate manual verification.',
-  },
-  {
-    icon: Zap,
-    title: 'Unusual Transactions',
-    count: 12,
-    color: 'text-amber-600',
-    bgColor: 'bg-amber-50',
-    why: 'Transaction amounts significantly deviate from the registered market value, or multiple transactions occurred in a short period on the same parcel. These patterns are inconsistent with normal property transfers.',
-  },
-  {
-    icon: Eye,
-    title: 'Potential Encroachments',
-    count: 4,
-    color: 'text-violet-600',
-    bgColor: 'bg-violet-50',
-    why: 'GPS survey data and satellite analysis indicate physical boundaries that do not match registered boundary coordinates. Cross-referencing with neighboring parcel records shows potential overlap.',
-  },
-  {
-    icon: DollarSign,
-    title: 'Revenue Anomalies',
-    count: 3,
-    color: 'text-blue-600',
-    bgColor: 'bg-blue-50',
-    why: 'Property tax payments do not match the expected collection for the parcel classification and area. This may indicate under-assessment, tax evasion, or data entry errors in the revenue records.',
-  },
-]
+/* ------------------------------------------------------------------ */
+/*  Deterministic application-review generator                         */
+/* ------------------------------------------------------------------ */
+
+const REQUIRED_DOCS: Record<string, string[]> = {
+  'Ownership Verification': ['Aadhaar Card', 'Sale Deed', 'Patta Certificate', 'Encumbrance Certificate'],
+  'Mutation Request': ['Death Certificate', 'Legal Heir Certificate', 'Old Patta', 'Sale Deed', 'Aadhaar Card'],
+  'Building Permission': ['Site Plan', 'Building Plan', 'NOC Fire', 'NOC Environment', 'Ownership Proof', 'Tax Clearance'],
+  'Encumbrance Certificate': ['Aadhaar Card', 'Sale Deed Copy', 'Patta Certificate'],
+}
+
+function computeAppReview(request: ServiceRequest, parcel?: Parcel): AppReview {
+  const required = REQUIRED_DOCS[request.serviceName] ?? ['Aadhaar Card', 'Application Form']
+  const provided = request.documents
+  const missing = required.filter((d) => !provided.includes(d))
+
+  const issues: string[] = []
+
+  if (missing.length > 0) {
+    issues.push(`${missing.length} required document(s) missing: ${missing.join(', ')}`)
+  }
+
+  if (parcel) {
+    if (parcel.disputeStatus === 'active') {
+      issues.push(`Active dispute on parcel ${parcel.ulpin} may delay or invalidate this application`)
+    }
+    if (parcel.propertyTaxStatus !== 'paid') {
+      issues.push('Property tax clearance is pending — required for most service requests')
+    }
+    if (parcel.ownershipStatus === 'pending') {
+      issues.push('Ownership verification is incomplete — applicant identity cannot be fully confirmed')
+    }
+    if (parcel.encumbranceStatus === 'mortgaged' || parcel.encumbranceStatus === 'encumbered') {
+      issues.push('Active encumbrance on parcel may restrict the service being requested')
+    }
+  }
+
+  const completedSteps = request.timeline.filter((t) => t.date !== '').length
+  const totalSteps = request.timeline.length
+  const progress = totalSteps > 0 ? completedSteps / totalSteps : 0
+
+  let confidence = 70 + Math.floor(progress * 20)
+  if (issues.length === 0) confidence = Math.min(confidence + 5, 96)
+  if (missing.length > 2) confidence = Math.max(confidence - 10, 50)
+
+  const recs: string[] = []
+  if (missing.length > 0) recs.push(`Request applicant to submit ${missing.join(', ')}`)
+  if (issues.some((i) => i.includes('dispute'))) recs.push('Place application on hold pending dispute resolution')
+  if (issues.some((i) => i.includes('tax'))) recs.push('Mandate tax clearance certificate before proceeding')
+  if (recs.length === 0) recs.push('Application appears complete. Proceed to next workflow stage.')
+
+  return {
+    summary: `${request.serviceName} application (${request.applicationId}) for parcel ${request.ulpin}. Applicant: ${request.applicantName}. Current stage: ${request.currentStatus.replace(/_/g, ' ')}.`,
+    requiredDocs: required,
+    providedDocs: provided,
+    missingDocs: missing,
+    issues,
+    confidence,
+    recommendation: recs.join(' '),
+  }
+}
+
+/* ------------------------------------------------------------------ */
+/*  AI Confidence Bar                                                  */
+/* ------------------------------------------------------------------ */
+
+function ConfidenceBar({ value }: { value: number }) {
+  const color = value >= 90 ? 'bg-emerald-500' : value >= 75 ? 'bg-amber-500' : 'bg-red-500'
+  return (
+    <div className="flex items-center gap-2">
+      <div className="flex-1 h-1.5 bg-slate-100 rounded-full overflow-hidden">
+        <div className={cn('h-full rounded-full transition-all', color)} style={{ width: `${value}%` }} />
+      </div>
+      <span className="text-xs font-medium text-slate-600 tabular-nums">{value}%</span>
+    </div>
+  )
+}
+
+/* ------------------------------------------------------------------ */
+/*  Main Component                                                     */
+/* ------------------------------------------------------------------ */
+
+type Tab = 'parcel' | 'application'
 
 export default function AIInsights() {
-  const [insightStatuses, setInsightStatuses] = useState<Record<string, string>>(
-    Object.fromEntries(aiInsights.map(i => [i.id, i.status]))
+  const [activeTab, setActiveTab] = useState<Tab>('parcel')
+
+  /* --- Parcel search state --- */
+  const [parcelQuery, setParcelQuery] = useState('')
+  const [showParcelResults, setShowParcelResults] = useState(false)
+  const [selectedParcel, setSelectedParcel] = useState<Parcel | null>(null)
+
+  const parcelSearchResults = useMemo(() => {
+    if (!parcelQuery.trim()) return []
+    return searchParcels(parcelQuery).slice(0, 8)
+  }, [parcelQuery])
+
+  const parcelInsights = useMemo(() => {
+    if (!selectedParcel) return []
+    return computeParcelInsights(selectedParcel)
+  }, [selectedParcel])
+
+  const avgConfidence = useMemo(() => {
+    if (parcelInsights.length === 0) return 0
+    return Math.round(parcelInsights.reduce((s, i) => s + i.confidence, 0) / parcelInsights.length)
+  }, [parcelInsights])
+
+  /* --- Application state --- */
+  const [applications, setApplications] = useState<ServiceRequest[]>(serviceRequests)
+  const [selectedAppId, setSelectedAppId] = useState<string>('')
+  const [appReview, setAppReview] = useState<AppReview | null>(null)
+  const [reviewLoading, setReviewLoading] = useState(false)
+  const [reviewError, setReviewError] = useState<string | null>(null)
+
+  const selectedApp = useMemo(
+    () => applications.find((a) => a.id === selectedAppId) ?? null,
+    [applications, selectedAppId],
   )
 
-  const newCount = aiInsights.filter(i => insightStatuses[i.id] === 'new').length
-  const investigatingCount = aiInsights.filter(i => insightStatuses[i.id] === 'investigating').length
+  useEffect(() => {
+    let cancelled = false
+    async function load() {
+      try {
+        const res = await api.applications()
+        if (cancelled) return
+        if (res.applications?.length) {
+          setApplications(res.applications as unknown as ServiceRequest[])
+        }
+      } catch {
+        // backend unreachable — keep local fallback
+      }
+    }
+    load()
+    return () => { cancelled = true }
+  }, [])
 
-  const handleAction = (id: string, action: 'investigating' | 'dismissed' | 'new') => {
-    setInsightStatuses(prev => ({ ...prev, [id]: action }))
-  }
+  const runAiReview = useCallback(async () => {
+    if (!selectedApp) return
+    setReviewLoading(true)
+    setReviewError(null)
+    setAppReview(null)
+    try {
+      const res = await api.aiReviewApplication(selectedApp.id)
+      const raw = res.aiReview ?? res.report
+      const parcel = searchParcels(selectedApp.ulpin)[0]
+      const computed = computeAppReview(selectedApp, parcel)
+      const merged: AppReview = {
+        summary: raw?.summary ?? computed.summary,
+        requiredDocs: computed.requiredDocs,
+        providedDocs: computed.providedDocs,
+        missingDocs: computed.missingDocs,
+        issues: raw?.issues ?? computed.issues,
+        confidence: raw?.confidence ?? computed.confidence,
+        recommendation: raw?.recommendation ?? computed.recommendation,
+      }
+      setAppReview(merged)
+    } catch {
+      const parcel = searchParcels(selectedApp.ulpin)[0]
+      setAppReview(computeAppReview(selectedApp, parcel))
+    } finally {
+      setReviewLoading(false)
+    }
+  }, [selectedApp])
+
+  const handleParcelSelect = useCallback((parcel: Parcel) => {
+    setSelectedParcel(parcel)
+    setParcelQuery('')
+    setShowParcelResults(false)
+  }, [])
+
+  const handleAppSelect = useCallback((id: string) => {
+    setSelectedAppId(id)
+    setAppReview(null)
+    setReviewError(null)
+  }, [])
+
+  /* --------------------------------------------------------------- */
 
   return (
     <div className="space-y-6">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-900">AI / ML Intelligence Center</h1>
-          <p className="text-sm text-slate-500 mt-1">Automated analysis and anomaly detection for land parcels</p>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1.5 px-3 py-1.5 bg-gov-50 rounded-lg border border-gov-200">
-            <Brain className="w-4 h-4 text-gov-600" />
-            <span className="text-xs font-medium text-gov-700">AI Engine Active</span>
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-xl bg-gov-50 border border-gov-200 flex items-center justify-center">
+            <Brain className="w-5 h-5 text-gov-600" />
           </div>
+          <div>
+            <h1 className="text-lg font-bold text-slate-900">AI Insights</h1>
+            <p className="text-xs text-slate-500">AI-assisted analysis for land governance</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-amber-50 border border-amber-200">
+          <AlertTriangle className="w-3.5 h-3.5 text-amber-600" />
+          <span className="text-[11px] font-medium text-amber-700">AI outputs require human verification</span>
         </div>
       </div>
 
-      <CardGrid>
-        <StatCard title="New Alerts" value={newCount} icon={AlertTriangle} change="Requires action" changeType="down" iconColor="text-red-600" />
-        <StatCard title="Investigating" value={investigatingCount} icon={Search} change="In progress" changeType="neutral" iconColor="text-amber-600" />
-        <StatCard title="Total Insights" value={aiInsights.length} icon={Brain} change="All time" changeType="neutral" iconColor="text-gov-600" />
-        <StatCard title="Model Accuracy" value="87.3%" icon={TrendingUp} change="+2.1% this month" changeType="up" iconColor="text-emerald-600" />
-      </CardGrid>
+      {/* Tabs */}
+      <div className="flex gap-1 p-1 bg-slate-100 rounded-lg w-fit">
+        {([
+          { key: 'parcel' as const, label: 'AI Parcel Insights', icon: Search },
+          { key: 'application' as const, label: 'AI Application Assistant', icon: FileSearch },
+        ]).map((tab) => (
+          <button
+            key={tab.key}
+            onClick={() => setActiveTab(tab.key)}
+            className={cn(
+              'flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-md transition-all',
+              activeTab === tab.key
+                ? 'bg-white text-slate-900 shadow-sm'
+                : 'text-slate-500 hover:text-slate-700',
+            )}
+          >
+            <tab.icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        ))}
+      </div>
 
-      <Card title="AI Insights" subtitle="Automated anomaly detection results" noPadding>
-        <div className="divide-y divide-slate-100">
-          {aiInsights.map(insight => {
-            const Icon = typeIcons[insight.type] || Brain
-            const currentStatus = insightStatuses[insight.id]
-            return (
-              <div key={insight.id} className="px-5 py-4 hover:bg-slate-50/50 transition-colors">
-                <div className="flex flex-col lg:flex-row lg:items-start gap-4">
-                  <div className="flex items-start gap-3 flex-1 min-w-0">
-                    <div className="w-10 h-10 rounded-lg bg-slate-100 flex items-center justify-center shrink-0">
-                      <Icon className="w-5 h-5 text-slate-600" />
-                    </div>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-sm font-semibold text-slate-900">{insight.title}</h3>
-                        <Badge variant={severityColors[insight.severity] as 'red' | 'amber' | 'slate'}>
-                          {insight.severity.charAt(0).toUpperCase() + insight.severity.slice(1)}
-                        </Badge>
-                        <StatusBadge status={currentStatus} />
-                      </div>
-                      <p className="text-xs text-slate-500 mt-1">{typeLabels[insight.type]}</p>
-                      <p className="text-sm text-slate-600 mt-1.5">{insight.description}</p>
-                      {insight.ulpin && (
-                        <p className="text-xs text-slate-400 mt-1 font-mono">ULPIN: {insight.ulpin}</p>
-                      )}
-                      <div className="flex items-center gap-4 mt-2">
-                        <span className="text-xs text-slate-500">Date: {new Date(insight.date).toLocaleDateString('en-IN')}</span>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-slate-500">Confidence:</span>
-                          <div className="w-24 h-1.5 bg-slate-200 rounded-full overflow-hidden">
-                            <div
-                              className={cn('h-full rounded-full transition-all', insight.confidence >= 80 ? 'bg-red-500' : insight.confidence >= 60 ? 'bg-amber-500' : 'bg-slate-400')}
-                              style={{ width: `${insight.confidence}%` }}
-                            />
-                          </div>
-                          <span className="text-xs font-medium text-slate-700">{insight.confidence}%</span>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="flex gap-2 shrink-0 lg:flex-col">
-                    {currentStatus === 'new' && (
-                      <>
-                        <Button size="sm" onClick={() => handleAction(insight.id, 'investigating')}>
-                          <Search className="w-3.5 h-3.5" /> Investigate
-                        </Button>
-                        <Button size="sm" variant="ghost" onClick={() => handleAction(insight.id, 'dismissed')}>
-                          Dismiss
-                        </Button>
-                      </>
-                    )}
-                    {currentStatus === 'investigating' && (
-                      <Button size="sm" variant="ghost" onClick={() => handleAction(insight.id, 'dismissed')}>
-                        Dismiss
-                      </Button>
-                    )}
-                    {currentStatus === 'dismissed' && (
-                      <Button size="sm" variant="ghost" onClick={() => handleAction(insight.id, 'new')}>
-                        Reopen
-                      </Button>
-                    )}
-                  </div>
-                </div>
+      {/* ============================================================ */}
+      {/*  SECTION 1 — AI Parcel Insights                               */}
+      {/* ============================================================ */}
+      {activeTab === 'parcel' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Parcel Search</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Select a parcel to run AI anomaly & risk analysis</p>
               </div>
-            )
-          })}
-        </div>
-      </Card>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-gov-50 border border-gov-200">
+                <Brain className="w-3 h-3 text-gov-600" />
+                <span className="text-[10px] font-semibold text-gov-700">AI-ASSISTED</span>
+              </div>
+            </div>
 
-      <Card title="Satellite Change Detection" subtitle="AI-powered comparison of satellite imagery">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div className="space-y-3">
-            <div className="bg-gradient-to-br from-blue-50 to-slate-100 rounded-xl p-6 border border-slate-200 relative overflow-hidden min-h-[240px]">
-              <div className="absolute top-3 left-3 z-10">
-                <Badge variant="blue">Before</Badge>
-              </div>
-              <div className="mt-6 text-center">
-                <div className="w-full h-40 bg-slate-200/60 rounded-lg relative">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="grid grid-cols-3 gap-1 opacity-30">
-                      {Array.from({ length: 9 }).map((_, i) => (
-                        <div key={i} className="w-8 h-8 rounded bg-green-700/40" />
-                      ))}
-                    </div>
-                  </div>
-                  <p className="absolute bottom-2 left-2 text-[10px] text-slate-500 bg-white/80 px-1.5 py-0.5 rounded">
-                    Captured: 2025-09-15
-                  </p>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">Previous satellite observation — 85% vegetation cover</p>
-              </div>
-            </div>
-          </div>
-          <div className="space-y-3">
-            <div className="bg-gradient-to-br from-orange-50 to-slate-100 rounded-xl p-6 border border-slate-200 relative overflow-hidden min-h-[240px]">
-              <div className="absolute top-3 left-3 z-10">
-                <Badge variant="amber">After</Badge>
-              </div>
-              <div className="mt-6 text-center">
-                <div className="w-full h-40 bg-slate-200/60 rounded-lg relative">
-                  <div className="absolute inset-0 flex items-center justify-center">
-                    <div className="grid grid-cols-3 gap-1">
-                      {Array.from({ length: 9 }).map((_, i) => (
-                        <div key={i} className={cn('w-8 h-8 rounded', (i === 3 || i === 4 || i === 5) ? 'bg-amber-600/70 border-2 border-red-500 border-dashed' : 'bg-green-700/40')} />
-                      ))}
-                    </div>
-                  </div>
-                  <p className="absolute bottom-2 left-2 text-[10px] text-slate-500 bg-white/80 px-1.5 py-0.5 rounded">
-                    Captured: 2025-11-28
-                  </p>
-                </div>
-                <p className="text-xs text-slate-500 mt-2">Latest observation — 62% vegetation cover, new structures detected</p>
-              </div>
-            </div>
-          </div>
-        </div>
-        <div className="mt-4 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
-          <div className="flex items-center gap-3">
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded border-2 border-red-500 border-dashed bg-red-50" />
-              <span className="text-xs text-slate-600">Changed Area (23%)</span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-3 h-3 rounded bg-green-700/40" />
-              <span className="text-xs text-slate-600">Unchanged Vegetation</span>
-            </div>
-          </div>
-          <div className="flex items-center gap-3">
-            <span className="text-sm font-semibold text-slate-900">Change Confidence: <span className="text-red-600">91%</span></span>
-          </div>
-        </div>
-        <div className="mt-4 flex gap-2">
-          <Button size="sm">
-            <Search className="w-3.5 h-3.5" /> Investigate
-          </Button>
-          <Button size="sm" variant="secondary">
-            <MapPin className="w-3.5 h-3.5" /> Create Inspection Request
-          </Button>
-        </div>
-      </Card>
-
-      <Card title="AI Decision Support" subtitle="Intelligent flagging and recommendations">
-        <div className="mb-4">
-          <p className="text-xs text-amber-600 bg-amber-50 border border-amber-200 rounded-lg px-3 py-2 inline-flex items-center gap-1.5">
-            <AlertTriangle className="w-3.5 h-3.5" />
-            AI-assisted insight — Requires official verification
-          </p>
-        </div>
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {decisionCards.map(card => {
-            const Icon = card.icon
-            return (
-              <div key={card.title} className="border border-slate-200 rounded-xl p-4 hover:shadow-sm transition-shadow">
-                <div className="flex items-start gap-3">
-                  <div className={cn('w-10 h-10 rounded-lg flex items-center justify-center shrink-0', card.bgColor)}>
-                    <Icon className={cn('w-5 h-5', card.color)} />
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center justify-between">
-                      <h3 className="text-sm font-semibold text-slate-900">{card.title}</h3>
-                      <span className={cn('text-xl font-bold', card.color)}>{card.count}</span>
-                    </div>
-                    <div className="mt-2 p-2.5 bg-slate-50 rounded-lg">
-                      <p className="text-xs font-medium text-slate-600 mb-1">Why was this flagged?</p>
-                      <p className="text-xs text-slate-500 leading-relaxed">{card.why}</p>
-                    </div>
-                    <button className="mt-2 flex items-center gap-1 text-xs font-medium text-gov-600 hover:text-gov-700">
-                      View flagged parcels <ChevronRight className="w-3 h-3" />
+            <div className="relative">
+              <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+              <input
+                type="text"
+                value={parcelQuery}
+                onChange={(e) => { setParcelQuery(e.target.value); setShowParcelResults(true) }}
+                onFocus={() => setShowParcelResults(true)}
+                placeholder="Search by ULPIN, survey number, owner name, or village..."
+                className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-gov-500"
+              />
+              {parcelQuery && (
+                <button
+                  onClick={() => { setParcelQuery(''); setShowParcelResults(false) }}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              )}
+              {showParcelResults && parcelSearchResults.length > 0 && (
+                <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                  {parcelSearchResults.map((p) => (
+                    <button
+                      key={p.id}
+                      onClick={() => handleParcelSelect(p)}
+                      className="w-full text-left px-3 py-2.5 hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors"
+                    >
+                      <p className="text-xs font-mono text-gov-600">{p.ulpin}</p>
+                      <p className="text-sm text-slate-900 mt-0.5">{p.surveyNumber} — {p.village}, {p.district}</p>
+                      <p className="text-xs text-slate-500">{p.ownerName} · {p.area} {p.areaUnit} · {p.landUse}</p>
                     </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+
+          {/* Selected parcel header */}
+          {selectedParcel && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="space-y-1.5">
+                  <div className="flex items-center gap-2">
+                    <ShieldCheck className="w-4 h-4 text-gov-600" />
+                    <span className="text-xs font-semibold text-slate-900">Selected Parcel</span>
+                    <StatusBadge status={selectedParcel.ownershipStatus} />
+                  </div>
+                  <p className="text-sm font-mono font-bold text-gov-700">{selectedParcel.ulpin}</p>
+                  <p className="text-xs text-slate-500">
+                    {selectedParcel.surveyNumber}, {selectedParcel.village}, {selectedParcel.district} — {selectedParcel.area} {selectedParcel.areaUnit} ({selectedParcel.landUse})
+                  </p>
+                </div>
+                <button
+                  onClick={() => { setSelectedParcel(null); setAppReview(null) }}
+                  className="text-slate-400 hover:text-slate-600"
+                >
+                  <XCircle className="w-4 h-4" />
+                </button>
+              </div>
+
+              <div className="mt-3 pt-3 border-t border-slate-100">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <span className="text-[11px] font-medium text-slate-500">Overall AI Confidence</span>
+                </div>
+                <ConfidenceBar value={avgConfidence} />
+                <p className="text-[10px] text-slate-400 mt-1.5">
+                  Based on {parcelInsights.length} insight(s) · AI-ASSISTED · requires human verification
+                </p>
+              </div>
+            </div>
+          )}
+
+          {/* Insight cards */}
+          {selectedParcel && parcelInsights.length > 0 && (
+            <div className="space-y-3">
+              {parcelInsights.map((insight, idx) => (
+                <div key={idx} className="bg-white border border-slate-200 rounded-lg p-4">
+                  <div className="flex items-start justify-between gap-3 mb-2">
+                    <div className="flex items-center gap-2">
+                      <AlertTriangle className={cn(
+                        'w-4 h-4 flex-shrink-0',
+                        insight.severity === 'high' ? 'text-red-500' : insight.severity === 'medium' ? 'text-amber-500' : 'text-slate-400',
+                      )} />
+                      <h3 className="text-sm font-semibold text-slate-900">{insight.title}</h3>
+                    </div>
+                    <StatusBadge status={insight.severity} />
+                  </div>
+
+                  <p className="text-xs text-slate-600 leading-relaxed mb-3">{insight.description}</p>
+
+                  <div className="space-y-2">
+                    <div className="flex items-center gap-2">
+                      <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Confidence</span>
+                      <ConfidenceBar value={insight.confidence} />
+                    </div>
+                    <div className="flex items-start gap-2 p-2.5 bg-slate-50 rounded-lg border border-slate-100">
+                      <CheckCircle2 className="w-3.5 h-3.5 text-gov-600 mt-0.5 flex-shrink-0" />
+                      <p className="text-xs text-slate-700 leading-relaxed">{insight.action}</p>
+                    </div>
                   </div>
                 </div>
-              </div>
-            )
-          })}
+              ))}
+            </div>
+          )}
+
+          {/* Empty state */}
+          {selectedParcel && parcelInsights.length === 0 && (
+            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+              <Brain className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm text-slate-500">No insights generated for this parcel.</p>
+            </div>
+          )}
+
+          {!selectedParcel && (
+            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+              <Brain className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm text-slate-500">Search and select a parcel above to view AI-powered insights.</p>
+              <p className="text-xs text-slate-400 mt-1">Insights are generated from cross-referencing parcel data with governance records.</p>
+            </div>
+          )}
         </div>
-      </Card>
+      )}
+
+      {/* ============================================================ */}
+      {/*  SECTION 2 — AI Application Assistant                         */}
+      {/* ============================================================ */}
+      {activeTab === 'application' && (
+        <div className="space-y-4">
+          <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <h2 className="text-sm font-semibold text-slate-900">Select Application</h2>
+                <p className="text-xs text-slate-500 mt-0.5">Choose an application for AI-assisted review</p>
+              </div>
+              <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-gov-50 border border-gov-200">
+                <Brain className="w-3 h-3 text-gov-600" />
+                <span className="text-[10px] font-semibold text-gov-700">AI-ASSISTED</span>
+              </div>
+            </div>
+
+            <div className="relative">
+              <select
+                value={selectedAppId}
+                onChange={(e) => handleAppSelect(e.target.value)}
+                className="w-full appearance-none px-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-gov-500 bg-white pr-10"
+              >
+                <option value="">— Select an application —</option>
+                {applications.map((app) => (
+                  <option key={app.id} value={app.id}>
+                    {app.applicationId} · {app.serviceName} — {app.applicantName} ({app.currentStatus.replace(/_/g, ' ')})
+                  </option>
+                ))}
+              </select>
+              <ChevronDown className="absolute right-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400 pointer-events-none" />
+            </div>
+          </div>
+
+          {/* Application details + Run button */}
+          {selectedApp && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4">
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mb-4">
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Application</p>
+                  <p className="text-xs font-mono font-semibold text-slate-900 mt-0.5">{selectedApp.applicationId}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Service</p>
+                  <p className="text-xs font-medium text-slate-900 mt-0.5">{selectedApp.serviceName}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Applicant</p>
+                  <p className="text-xs font-medium text-slate-900 mt-0.5">{selectedApp.applicantName}</p>
+                </div>
+                <div>
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">Status</p>
+                  <div className="mt-0.5"><StatusBadge status={selectedApp.currentStatus} /></div>
+                </div>
+              </div>
+              <div className="flex items-center gap-3">
+                <Button onClick={runAiReview} disabled={reviewLoading} size="sm">
+                  {reviewLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                  {reviewLoading ? 'Running AI Review...' : 'Run AI Review'}
+                </Button>
+                {reviewError && <span className="text-xs text-red-500">{reviewError}</span>}
+              </div>
+            </div>
+          )}
+
+          {/* AI Review panel */}
+          {appReview && (
+            <div className="bg-white border border-slate-200 rounded-lg p-4 space-y-4">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <ShieldCheck className="w-4 h-4 text-gov-600" />
+                  <h3 className="text-sm font-semibold text-slate-900">AI Review Result</h3>
+                </div>
+                <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-amber-50 border border-amber-200">
+                  <AlertTriangle className="w-3 h-3 text-amber-600" />
+                  <span className="text-[10px] font-medium text-amber-700">Requires human verification</span>
+                </div>
+              </div>
+
+              {/* Summary */}
+              <div className="p-3 bg-slate-50 rounded-lg border border-slate-100">
+                <p className="text-xs text-slate-700 leading-relaxed">{appReview.summary}</p>
+              </div>
+
+              {/* Confidence */}
+              <div>
+                <span className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">AI Confidence</span>
+                <div className="mt-1"><ConfidenceBar value={appReview.confidence} /></div>
+              </div>
+
+              {/* Documents */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/50">
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-2">Documents Required ({appReview.requiredDocs.length})</p>
+                  <div className="space-y-1">
+                    {appReview.requiredDocs.map((doc) => {
+                      const provided = appReview.providedDocs.includes(doc)
+                      return (
+                        <div key={doc} className="flex items-center gap-1.5">
+                          {provided ? (
+                            <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                          ) : (
+                            <XCircle className="w-3 h-3 text-red-400" />
+                          )}
+                          <span className={cn('text-xs', provided ? 'text-slate-700' : 'text-red-600')}>{doc}</span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="p-3 rounded-lg border border-slate-100 bg-slate-50/50">
+                  <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider mb-2">
+                    Issues Found ({appReview.issues.length})
+                  </p>
+                  {appReview.issues.length === 0 ? (
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 className="w-3 h-3 text-emerald-500" />
+                      <span className="text-xs text-emerald-700">No issues detected</span>
+                    </div>
+                  ) : (
+                    <div className="space-y-1.5">
+                      {appReview.issues.map((issue, i) => (
+                        <div key={i} className="flex items-start gap-1.5">
+                          <AlertTriangle className="w-3 h-3 text-amber-500 mt-0.5 flex-shrink-0" />
+                          <span className="text-xs text-slate-700 leading-relaxed">{issue}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Recommendation */}
+              <div className="p-3 bg-gov-50 rounded-lg border border-gov-200">
+                <div className="flex items-center gap-2 mb-1.5">
+                  <CheckCircle2 className="w-3.5 h-3.5 text-gov-600" />
+                  <span className="text-[10px] font-semibold text-gov-700 uppercase tracking-wider">Recommendation</span>
+                </div>
+                <p className="text-xs text-slate-700 leading-relaxed">{appReview.recommendation}</p>
+              </div>
+            </div>
+          )}
+
+          {!selectedApp && (
+            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+              <FileSearch className="w-8 h-8 text-slate-300 mx-auto mb-2" />
+              <p className="text-sm text-slate-500">Select an application above to run AI-assisted review.</p>
+              <p className="text-xs text-slate-400 mt-1">The AI assistant checks document completeness, cross-references parcel data, and flags potential issues.</p>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Footer disclaimer */}
+      <div className="bg-slate-50 border border-slate-200 rounded-lg p-3 text-center">
+        <p className="text-[11px] text-slate-500">
+          AI outputs are assistive only and always require verification by an authorized officer.
+        </p>
+      </div>
     </div>
   )
 }

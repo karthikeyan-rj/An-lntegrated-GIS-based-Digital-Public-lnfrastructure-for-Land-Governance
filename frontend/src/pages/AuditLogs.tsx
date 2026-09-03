@@ -1,226 +1,165 @@
-import { useMemo, useState } from 'react'
-import { Shield, Activity, XCircle, Users, Download, Search, X, FileClock } from 'lucide-react'
-import { StatCard } from '@/components/ui/StatCard'
-import { Card } from '@/components/ui/Card'
-import { Badge } from '@/components/ui/Badge'
-import { Button } from '@/components/ui/Button'
-import { EmptyState } from '@/components/ui/States'
-import { auditLogs } from '@/data/services'
+import { useEffect, useMemo, useState } from 'react'
+import { Shield, Search, Filter, Loader2 } from 'lucide-react'
+import { StatusBadge } from '@/components/ui/Badge'
+import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
+import { auditLogs as fallbackLogs } from '@/data/services'
 import type { AuditLog } from '@/types'
 
-const departments = ['Revenue', 'Planning', 'Citizen', 'Administration', 'System', 'Registration']
-
-const actions = [
-  'Viewed Parcel Profile',
-  'Approved Mutation',
-  'Reviewed Building Permission',
-  'Submitted Service Request',
-  'API Key Rotated',
-  'Failed Login Attempt',
-  'Downloaded RoR',
-  'Data Sync Completed',
-]
-
-function ResultBadge({ result }: { result: AuditLog['result'] }) {
-  const variant = result === 'success' ? 'green' : result === 'failure' ? 'red' : 'amber'
-  return <Badge variant={variant}>{result.charAt(0).toUpperCase() + result.slice(1)}</Badge>
-}
-
 export default function AuditLogs() {
-  const [selected, setSelected] = useState<AuditLog | null>(null)
-  const [query, setQuery] = useState('')
-  const [filters, setFilters] = useState({
-    dateRange: 'all',
-    user: 'all',
-    department: 'all',
-    action: 'all',
-    result: 'all',
-  })
+  const [logs, setLogs] = useState<AuditLog[]>([])
+  const [isDemo, setIsDemo] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [search, setSearch] = useState('')
+  const [resultFilter, setResultFilter] = useState<'all' | 'success' | 'failure' | 'warning'>('all')
 
-  const filteredLogs = useMemo(() => {
-    return auditLogs.filter(log => {
-      const matchesQuery = log.userName.toLowerCase().includes(query.toLowerCase()) ||
-        log.action.toLowerCase().includes(query.toLowerCase()) ||
-        log.targetId.toLowerCase().includes(query.toLowerCase()) ||
-        log.ip.includes(query)
-      const matchesDepartment = filters.department === 'all' || log.department === filters.department
-      const matchesAction = filters.action === 'all' || log.action === filters.action
-      const matchesResult = filters.result === 'all' || log.result === filters.result
-      return matchesQuery && matchesDepartment && matchesAction && matchesResult
+  useEffect(() => {
+    let cancelled = false
+    ;(async () => {
+      try {
+        const data = await api.audit()
+        if (cancelled) return
+        setLogs(data.logs as AuditLog[])
+      } catch {
+        if (cancelled) return
+        setLogs(fallbackLogs)
+        setIsDemo(true)
+      } finally {
+        if (!cancelled) setLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
+  }, [])
+
+  const filtered = useMemo(() => {
+    const q = search.toLowerCase()
+    return logs.filter((l) => {
+      const matchesSearch =
+        !q ||
+        l.userName.toLowerCase().includes(q) ||
+        l.action.toLowerCase().includes(q) ||
+        l.target.toLowerCase().includes(q) ||
+        l.targetId.toLowerCase().includes(q)
+      const matchesResult = resultFilter === 'all' || l.result === resultFilter
+      return matchesSearch && matchesResult
     })
-  }, [query, filters])
-
-  const selectDropdown = 'px-2.5 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-gov-600'
+  }, [logs, search, resultFilter])
 
   return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Security & Audit Logs</h1>
-        <p className="text-sm text-slate-500 mt-1">Immutable record of all activities across the LandStack platform</p>
-      </div>
-
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Events" value="12,847" icon={Shield} iconColor="text-blue-600" change="+156 today" changeType="up" />
-        <StatCard title="Today's Events" value="156" icon={Activity} iconColor="text-emerald-600" change="Active monitoring" changeType="neutral" />
-        <StatCard title="Failed Attempts" value="3" icon={XCircle} iconColor="text-red-600" change="1 flagged for review" changeType="neutral" />
-        <StatCard title="Active Users" value="42" icon={Users} iconColor="text-purple-600" change="+5 this month" changeType="up" />
-      </div>
-
-      <div className="flex flex-col lg:flex-row gap-3 lg:items-end">
-        <div className="flex-1">
-          <label className="text-xs font-medium text-slate-500">Date Range</label>
-          <select className={`${selectDropdown} w-full mt-1`} value={filters.dateRange} onChange={e => setFilters(f => ({ ...f, dateRange: e.target.value }))}>
-            <option value="all">All time</option>
-            <option value="today">Today</option>
-            <option value="7d">Last 7 days</option>
-            <option value="30d">Last 30 days</option>
-            <option value="90d">Last 90 days</option>
-          </select>
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-start justify-between">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-lg bg-gov-50 border border-gov-200 flex items-center justify-center">
+            <Shield className="w-5 h-5 text-gov-600" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold text-slate-900">Audit Logs</h1>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Immutable record of all system and user activity across the platform
+            </p>
+          </div>
         </div>
-        <div className="flex-1">
-          <label className="text-xs font-medium text-slate-500">User</label>
+        {isDemo && (
+          <span className="px-2.5 py-1 rounded-full bg-amber-100 text-amber-700 text-[10px] font-semibold border border-amber-200">
+            DEMO
+          </span>
+        )}
+      </div>
+
+      {/* Filters */}
+      <div className="flex items-center gap-3">
+        <div className="relative flex-1 max-w-sm">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
           <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search user or target..."
-            className="w-full mt-1 pl-8 pr-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-gov-600 focus:border-transparent"
+            type="text"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Search user, action, or resource..."
+            className="w-full pl-9 pr-3 py-2 text-xs border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-gov-500 bg-white"
           />
         </div>
-        <div className="flex-1">
-          <label className="text-xs font-medium text-slate-500">Department</label>
-          <select className={`${selectDropdown} w-full mt-1`} value={filters.department} onChange={e => setFilters(f => ({ ...f, department: e.target.value }))}>
-            <option value="all">All departments</option>
-            {departments.map(d => <option key={d} value={d}>{d}</option>)}
-          </select>
-        </div>
-        <div className="flex-1">
-          <label className="text-xs font-medium text-slate-500">Action Type</label>
-          <select className={`${selectDropdown} w-full mt-1`} value={filters.action} onChange={e => setFilters(f => ({ ...f, action: e.target.value }))}>
-            <option value="all">All actions</option>
-            {actions.map(a => <option key={a} value={a}>{a}</option>)}
-          </select>
-        </div>
-        <div className="flex-1">
-          <label className="text-xs font-medium text-slate-500">Result</label>
-          <select className={`${selectDropdown} w-full mt-1`} value={filters.result} onChange={e => setFilters(f => ({ ...f, result: e.target.value }))}>
-            <option value="all">All results</option>
+        <div className="flex items-center gap-1.5">
+          <Filter className="w-4 h-4 text-slate-400" />
+          <select
+            value={resultFilter}
+            onChange={(e) => setResultFilter(e.target.value as typeof resultFilter)}
+            className="px-2.5 py-2 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-gov-600"
+          >
+            <option value="all">All Results</option>
             <option value="success">Success</option>
             <option value="failure">Failure</option>
             <option value="warning">Warning</option>
           </select>
         </div>
-        <div className="flex lg:items-end">
-          <Button variant="secondary" size="md" onClick={() => setFilters({ dateRange: 'all', user: 'all', department: 'all', action: 'all', result: 'all' })}>
-            <X className="w-4 h-4" /> Clear
-          </Button>
-        </div>
       </div>
 
-      <Card
-        title="Audit Trail"
-        subtitle={`${filteredLogs.length} of ${auditLogs.length} events shown`}
-        action={
-          <Button variant="primary" size="sm">
-            <Download className="w-3.5 h-3.5" /> Export Logs
-          </Button>
-        }
-        noPadding
-      >
-        {filteredLogs.length === 0 ? (
-          <EmptyState
-            icon={<Search className="w-6 h-6" />}
-            title="No matching events"
-            description="Try adjusting your filters or search query to find the audit entries you're looking for."
-          />
+      {/* Table */}
+      <div className="bg-white border border-slate-200 rounded-lg overflow-hidden">
+        {loading ? (
+          <div className="flex items-center justify-center py-12 text-slate-400">
+            <Loader2 className="w-5 h-5 animate-spin mr-2" />
+            <span className="text-sm">Loading audit logs...</span>
+          </div>
+        ) : filtered.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-16 text-slate-400">
+            <Shield className="w-8 h-8 mb-3 text-slate-300" />
+            <p className="text-sm font-medium text-slate-500">No matching audit entries</p>
+            <p className="text-xs text-slate-400 mt-1">Try adjusting your search or filters</p>
+          </div>
         ) : (
           <div className="overflow-x-auto">
-            <table className="w-full text-sm">
+            <table className="w-full text-xs">
               <thead>
-                <tr className="border-b border-slate-100">
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Timestamp</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">User</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Department</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Action</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Target</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">IP Address</th>
-                  <th className="text-left py-3 px-3 text-xs font-medium text-slate-500 uppercase tracking-wider">Result</th>
+                <tr className="border-b border-slate-100 bg-slate-50/60">
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">Timestamp</th>
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">User</th>
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">Role / Dept</th>
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">Action</th>
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">Resource</th>
+                  <th className="text-left py-2.5 px-3 font-medium text-slate-500 uppercase tracking-wider">Result</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-50">
-                {filteredLogs.map(log => (
-                  <tr key={log.id} className="hover:bg-slate-50/60 transition-colors cursor-pointer" onClick={() => setSelected(log)}>
-                    <td className="py-3 px-3 text-xs text-slate-500 whitespace-nowrap">{new Date(log.timestamp).toLocaleString('en-IN')}</td>
-                    <td className="py-3 px-3">
+                {filtered.map((log) => (
+                  <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
+                    <td className="py-2 px-3 text-slate-500 whitespace-nowrap">
+                      {new Date(log.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                    </td>
+                    <td className="py-2 px-3">
                       <div className="flex items-center gap-2">
-                        <div className="w-6 h-6 rounded-full bg-gov-50 text-gov-700 flex items-center justify-center text-[10px] font-semibold">
-                          {log.userName.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase()}
+                        <div className="w-5 h-5 rounded-full bg-gov-50 text-gov-700 flex items-center justify-center text-[9px] font-bold">
+                          {log.userName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
                         <span className="font-medium text-slate-900">{log.userName}</span>
                       </div>
                     </td>
-                    <td className="py-3 px-3 text-slate-600">{log.department}</td>
-                    <td className="py-3 px-3 text-slate-900">{log.action}</td>
-                    <td className="py-3 px-3">
-                      <span className="text-xs text-slate-600">{log.target}</span>
-                      <span className="ml-1 font-mono text-[11px] text-slate-400">{log.targetId}</span>
+                    <td className="py-2 px-3 text-slate-600">{log.department}</td>
+                    <td className="py-2 px-3 text-slate-900 font-medium">{log.action}</td>
+                    <td className="py-2 px-3">
+                      <span className="text-slate-600">{log.target}</span>
+                      <span className="ml-1 font-mono text-slate-400">{log.targetId}</span>
                     </td>
-                    <td className="py-3 px-3 font-mono text-xs text-slate-500">{log.ip}</td>
-                    <td className="py-3 px-3"><ResultBadge result={log.result} /></td>
+                    <td className="py-2 px-3">
+                      <StatusBadge status={log.result} />
+                    </td>
                   </tr>
                 ))}
               </tbody>
             </table>
           </div>
         )}
-      </Card>
 
-      {selected && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40" onClick={() => setSelected(null)}>
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg max-h-[85vh] overflow-y-auto" onClick={e => e.stopPropagation()}>
-            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <FileClock className="w-5 h-5 text-gov-600" />
-                <h3 className="text-base font-semibold text-slate-900">Audit Entry Details</h3>
-              </div>
-              <button onClick={() => setSelected(null)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600">
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-sm">
-                <DetailItem label="Event ID" value={selected.id} mono />
-                <DetailItem label="User ID" value={selected.userId} mono />
-                <DetailItem label="Timestamp" value={new Date(selected.timestamp).toLocaleString('en-IN')} />
-                <DetailItem label="Action" value={selected.action} />
-                <DetailItem label="User" value={selected.userName} />
-                <DetailItem label="Department" value={selected.department} />
-                <DetailItem label="Target" value={selected.target} />
-                <DetailItem label="Target ID" value={selected.targetId} mono />
-                <DetailItem label="IP Address" value={selected.ip} mono />
-                <DetailItem label="Result" value={selected.result.charAt(0).toUpperCase() + selected.result.slice(1)} />
-              </div>
-              <div>
-                <p className="text-xs font-medium text-slate-500 mb-2">Integrity</p>
-                <div className="rounded-lg bg-slate-50 border border-slate-100 p-3 text-xs text-slate-500 font-mono break-all">
-                  sha256:9f7c2b91d4e8a3f0c35d6b7a1e09f2c4d5a6b7c8d9e0f1a2b3c4d5e6f7a8b9
-                </div>
-              </div>
-              <div className="flex justify-end">
-                <Button variant="secondary" size="sm" onClick={() => setSelected(null)}>Close</Button>
-              </div>
-            </div>
-          </div>
+        {/* Footer */}
+        <div className="px-3 py-2 border-t border-slate-100 bg-slate-50/40 flex items-center justify-between">
+          <span className="text-[10px] text-slate-400">
+            Showing {filtered.length} of {logs.length} entries
+          </span>
+          {isDemo && (
+            <span className="text-[10px] text-amber-500 font-medium">Using local demo data</span>
+          )}
         </div>
-      )}
-    </div>
-  )
-}
-
-function DetailItem({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
-  return (
-    <div>
-      <p className="text-xs font-medium text-slate-400">{label}</p>
-      <p className={`mt-0.5 text-slate-900 font-medium ${mono ? 'font-mono text-xs' : ''}`}>{value}</p>
+      </div>
     </div>
   )
 }

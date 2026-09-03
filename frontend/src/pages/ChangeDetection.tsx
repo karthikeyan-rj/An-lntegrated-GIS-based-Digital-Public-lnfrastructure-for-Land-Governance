@@ -1,257 +1,493 @@
-import { useState } from 'react'
-import { Satellite, TriangleAlert, Eye, CheckCircle2, ShieldQuestion, Search } from 'lucide-react'
-import { StatCard } from '@/components/ui/StatCard'
-import { StatusBadge } from '@/components/ui/Badge'
+import { useState, useMemo, useCallback } from 'react'
+import { useSearchParams } from 'react-router-dom'
+import {
+  Radar,
+  Images,
+  ScanSearch,
+  ClipboardCheck,
+  AlertTriangle,
+  CheckCircle2,
+  Loader2,
+  FileText,
+  Search,
+  X,
+} from 'lucide-react'
 import { Button } from '@/components/ui/Button'
+import { Badge, StatusBadge } from '@/components/ui/Badge'
+import { cn } from '@/lib/utils'
+import { api } from '@/lib/api'
+import { searchParcels, getParcelByULPIN } from '@/data/parcels'
+import type { Parcel } from '@/types'
 
-interface ChangeEntry {
-  id: string
-  type: string
-  description: string
+interface DetectionResult {
+  changeDetected: boolean
+  changeType: string
   confidence: number
-  ulpin: string
-  status: 'new' | 'investigating' | 'confirmed' | 'dismissed'
-  beforeTone: string
-  afterTone: string
-  beforeLabel: string
-  afterLabel: string
-  detected: string
+  riskLevel: 'high' | 'medium' | 'low'
+  details: string
+  source: 'ai' | 'local'
+  comparedRecords: { name: string; status: string; match: boolean }[]
 }
 
-const mockChanges: ChangeEntry[] = [
-  {
-    id: 'cd1',
-    type: 'Construction',
-    description: 'Unauthorized built-up area expansion detected on the northern edge of the parcel. Estimated 420 sqm of new construction without a matching building permission on record.',
-    confidence: 91,
-    ulpin: 'TN-CHN-PM-72618345',
-    status: 'new',
-    beforeTone: 'bg-emerald-100',
-    afterTone: 'bg-slate-400',
-    beforeLabel: '2025-04-12',
-    afterLabel: '2025-11-28',
-    detected: '2025-12-01',
-  },
-  {
-    id: 'cd2',
-    type: 'Deforestation',
-    description: 'Vegetation index decreased by 34% in the reserve forest buffer zone. Possible clearing activity detected near the protected wildlife corridor.',
-    confidence: 84,
-    ulpin: 'TN-TRZ-ML-74029586',
-    status: 'investigating',
-    beforeTone: 'bg-emerald-600',
-    afterTone: 'bg-amber-200',
-    beforeLabel: '2025-05-20',
-    afterLabel: '2025-11-15',
-    detected: '2025-11-22',
-  },
-  {
-    id: 'cd3',
-    type: 'Water Body Change',
-    description: 'Surface water extent reduced by 27% in the adjacent irrigation tank. Seasonal fluctuation within normal range, but below the 5-year average summer level.',
-    confidence: 66,
-    ulpin: 'TN-MDU-RV-38472916',
-    status: 'investigating',
-    beforeTone: 'bg-cyan-500',
-    afterTone: 'bg-cyan-200',
-    beforeLabel: '2025-03-08',
-    afterLabel: '2025-10-30',
-    detected: '2025-11-10',
-  },
-  {
-    id: 'cd4',
-    type: 'Boundary Shift',
-    description: 'Fence line appears displaced by ~1.2m on the western boundary relative to the recorded survey. Possible encroachment onto the neighboring parcel.',
-    confidence: 72,
-    ulpin: 'TN-MDU-VK-21958374',
-    status: 'investigating',
-    beforeTone: 'bg-lime-200',
-    afterTone: 'bg-orange-300',
-    beforeLabel: '2025-06-14',
-    afterLabel: '2025-11-25',
-    detected: '2025-11-28',
-  },
-  {
-    id: 'cd5',
-    type: 'Agricultural Conversion',
-    description: 'Crop cover replaced by impervious surface on a portion of the agricultural land. No conversion approval was issued by the revenue department.',
-    confidence: 88,
-    ulpin: 'TN-CBE-GN-91527483',
-    status: 'confirmed',
-    beforeTone: 'bg-green-400',
-    afterTone: 'bg-neutral-400',
-    beforeLabel: '2025-02-16',
-    afterLabel: '2025-11-02',
-    detected: '2025-11-18',
-  },
-  {
-    id: 'cd6',
-    type: 'Subsidence / Land Shift',
-    description: 'Ground elevation change of up to 0.4m detected over a localized area following the monsoon season. Geology department informed for ground verification.',
-    confidence: 58,
-    ulpin: 'CH-CHD-SE-05839271',
-    status: 'dismissed',
-    beforeTone: 'bg-blue-200',
-    afterTone: 'bg-slate-300',
-    beforeLabel: '2025-07-01',
-    afterLabel: '2025-10-19',
-    detected: '2025-10-21',
-  },
+function computeLocalResult(parcel: Parcel): DetectionResult {
+  const bp = parcel.buildingPermission
+  const lu = parcel.landUse
+  const restrictions = parcel.restrictions
+
+  const hasNoPermission = bp === 'none' || bp === 'rejected'
+  const isAgricultural = lu === 'agricultural' || lu === 'forest'
+  const hasRestrictions = restrictions.length > 0
+
+  if (hasNoPermission && isAgricultural) {
+    return {
+      changeDetected: true,
+      changeType: 'Potential unauthorized development detected',
+      confidence: 87,
+      riskLevel: 'high',
+      details: `Parcel zoned for ${lu} with no building permission on record. Imagery comparison suggests new structural footprint.`,
+      source: 'local',
+      comparedRecords: [
+        { name: 'Building Permission', status: bp, match: false },
+        { name: 'Land Use Classification', status: lu, match: false },
+        { name: 'Zoning Compliance', status: parcel.zoning, match: true },
+        { name: 'Tax Payment Status', status: parcel.propertyTaxStatus, match: true },
+      ],
+    }
+  }
+
+  if (hasNoPermission) {
+    return {
+      changeDetected: true,
+      changeType: 'Possible unauthorized construction',
+      confidence: 72,
+      riskLevel: 'medium',
+      details: `No building permission found. Imagery indicates possible new structure not matching previous records.`,
+      source: 'local',
+      comparedRecords: [
+        { name: 'Building Permission', status: bp, match: false },
+        { name: 'Land Use Classification', status: lu, match: true },
+        { name: 'Zoning Compliance', status: parcel.zoning, match: true },
+        { name: 'Tax Payment Status', status: parcel.propertyTaxStatus, match: true },
+      ],
+    }
+  }
+
+  if (hasRestrictions && bp === 'approved') {
+    return {
+      changeDetected: true,
+      changeType: 'Structure exceeds approved parameters',
+      confidence: 65,
+      riskLevel: 'medium',
+      details: `Building permission exists but parcel has active restrictions. Imagery shows changes that may exceed approved scope.`,
+      source: 'local',
+      comparedRecords: [
+        { name: 'Building Permission', status: bp, match: true },
+        { name: 'Land Use Classification', status: lu, match: true },
+        { name: 'Zoning Compliance', status: parcel.zoning, match: false },
+        { name: 'Tax Payment Status', status: parcel.propertyTaxStatus, match: true },
+      ],
+    }
+  }
+
+  return {
+    changeDetected: false,
+    changeType: 'No significant change detected',
+    confidence: 94,
+    riskLevel: 'low',
+    details: 'Imagery comparison shows no significant structural changes. All records are consistent with approved data.',
+    source: 'local',
+    comparedRecords: [
+      { name: 'Building Permission', status: bp, match: true },
+      { name: 'Land Use Classification', status: lu, match: true },
+      { name: 'Zoning Compliance', status: parcel.zoning, match: true },
+      { name: 'Tax Payment Status', status: parcel.propertyTaxStatus, match: true },
+    ],
+  }
+}
+
+const STEPS = [
+  { label: 'Historical Imagery Comparison', icon: Images, desc: 'Compare historical and recent satellite imagery for the parcel area' },
+  { label: 'AI Change Analysis', icon: Radar, desc: 'Run change detection algorithm on imagery pairs' },
+  { label: 'Potential Change Identified', icon: ScanSearch, desc: 'Flag differences exceeding threshold for review' },
+  { label: 'Compare Approved Records', icon: FileText, desc: 'Cross-reference with building permission, land use, and zoning records' },
+  { label: 'Officer Verification', icon: ClipboardCheck, desc: 'Authorized officer must verify before any enforcement action' },
 ]
 
-function ChangeCard({ entry }: { entry: ChangeEntry }) {
-  const [localStatus, setLocalStatus] = useState<ChangeEntry['status']>(entry.status)
+export default function ChangeDetection() {
+  const [params] = useSearchParams()
+  const initialUlpin = params.get('ulpin') || ''
 
-  const handleInvestigate = () => {
-    setLocalStatus('investigating')
-  }
+  const [searchQuery, setSearchQuery] = useState(initialUlpin)
+  const [showResults, setShowResults] = useState(false)
+  const [selectedParcel, setSelectedParcel] = useState<Parcel | null>(
+    initialUlpin ? getParcelByULPIN(initialUlpin) || null : null
+  )
+  const [loading, setLoading] = useState(false)
+  const [result, setResult] = useState<DetectionResult | null>(null)
+  const [currentStep, setCurrentStep] = useState(-1)
+  const [verificationStatus, setVerificationStatus] = useState<'none' | 'confirmed' | 'flagged'>('none')
+  const [verificationNote, setVerificationNote] = useState('')
 
-  const handleDismiss = () => {
-    setLocalStatus('dismissed')
-  }
+  const searchResults = useMemo(() => {
+    if (!searchQuery.trim()) return []
+    return searchParcels(searchQuery).slice(0, 8)
+  }, [searchQuery])
+
+  const handleSelect = useCallback((parcel: Parcel) => {
+    setSelectedParcel(parcel)
+    setSearchQuery('')
+    setShowResults(false)
+    setResult(null)
+    setCurrentStep(-1)
+    setVerificationStatus('none')
+    setVerificationNote('')
+  }, [])
+
+  const clearSelection = useCallback(() => {
+    setSelectedParcel(null)
+    setResult(null)
+    setCurrentStep(-1)
+    setVerificationStatus('none')
+    setVerificationNote('')
+  }, [])
+
+  const runDetection = useCallback(async () => {
+    if (!selectedParcel) return
+    setLoading(true)
+    setResult(null)
+    setCurrentStep(0)
+
+    const signals = {
+      buildingPermission: selectedParcel.buildingPermission,
+      landUse: selectedParcel.landUse,
+      zoning: selectedParcel.zoning,
+      ownershipStatus: selectedParcel.ownershipStatus,
+      restrictions: selectedParcel.restrictions,
+      propertyTaxStatus: selectedParcel.propertyTaxStatus,
+      area: selectedParcel.area,
+    }
+
+    let detectionResult: DetectionResult | null = null
+
+    try {
+      const response = await api.changeDetection({ ulpin: selectedParcel.ulpin, signals })
+      detectionResult = {
+        changeDetected: response.changeDetected ?? response.flagged ?? false,
+        changeType: response.changeType ?? response.type ?? 'Analysis complete',
+        confidence: response.confidence ?? 80,
+        riskLevel: response.riskLevel ?? response.severity ?? 'medium',
+        details: response.details ?? response.summary ?? 'AI analysis completed.',
+        source: 'ai',
+        comparedRecords: response.comparedRecords ?? [
+          { name: 'Building Permission', status: selectedParcel.buildingPermission, match: selectedParcel.buildingPermission === 'approved' },
+          { name: 'Land Use Classification', status: selectedParcel.landUse, match: true },
+          { name: 'Zoning Compliance', status: selectedParcel.zoning, match: true },
+          { name: 'Tax Payment Status', status: selectedParcel.propertyTaxStatus, match: selectedParcel.propertyTaxStatus === 'paid' },
+        ],
+      }
+    } catch {
+      // Backend unreachable — compute locally
+      await new Promise((r) => setTimeout(r, 1800))
+      detectionResult = computeLocalResult(selectedParcel)
+    }
+
+    // Simulate step progression
+    for (let i = 0; i <= 4; i++) {
+      setCurrentStep(i)
+      await new Promise((r) => setTimeout(r, 600))
+    }
+
+    setResult(detectionResult)
+    setLoading(false)
+  }, [selectedParcel])
+
+  const riskBadge = useMemo(() => {
+    if (!result) return null
+    const map: Record<string, string> = { high: 'red', medium: 'amber', low: 'green' }
+    return map[result.riskLevel] || 'slate'
+  }, [result])
 
   return (
-    <div className="card overflow-hidden">
-      <div className="grid grid-cols-2 gap-2 p-5 pb-3">
-        <div className="space-y-2">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">Before</span>
-          <div className={`h-40 rounded-lg ${entry.beforeTone} relative overflow-hidden`}>
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/10 to-transparent p-2">
-              <span className="text-[10px] font-medium text-black/60">{entry.beforeLabel}</span>
-            </div>
-            <div className="absolute inset-0 flex items-center justify-center opacity-40">
-              <div className="w-16 h-px bg-black/20 rotate-45" />
-              <div className="w-16 h-px bg-black/20 -rotate-45" />
-            </div>
-          </div>
+    <div className="max-w-5xl mx-auto space-y-6">
+      {/* Header */}
+      <div>
+        <div className="flex items-center gap-2 mb-1">
+          <Radar className="w-5 h-5 text-gov-600" />
+          <h1 className="text-xl font-bold text-slate-900">Change Detection</h1>
         </div>
-        <div className="space-y-2">
-          <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider">After</span>
-          <div className={`h-40 rounded-lg ${entry.afterTone} relative overflow-hidden`}>
-            <div className="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/10 to-transparent p-2">
-              <span className="text-[10px] font-medium text-black/60">{entry.afterLabel}</span>
-            </div>
-            <div className="absolute inset-0 flex items-center justify-center opacity-40">
-              <div className="w-16 h-px bg-black/20 rotate-45" />
-              <div className="w-16 h-px bg-black/20 -rotate-45" />
-            </div>
-          </div>
-        </div>
+        <p className="text-sm text-slate-500 ml-7">
+          AI-assisted detection of physical changes on a parcel by comparing satellite imagery with approved records.
+        </p>
       </div>
 
-      <div className="px-5 pb-5">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-sm font-semibold text-slate-900">{entry.type}</span>
-            <StatusBadge status={localStatus} />
+      {/* Parcel Search */}
+      <div className="bg-white border border-slate-200 rounded-lg p-4">
+        <label className="block text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">
+          Select Parcel
+        </label>
+        {selectedParcel ? (
+          <div className="flex items-center justify-between bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+            <div>
+              <p className="text-sm font-semibold text-slate-900">
+                {selectedParcel.surveyNumber} — {selectedParcel.village}, {selectedParcel.district}
+              </p>
+              <p className="text-xs font-mono text-gov-600 mt-0.5">{selectedParcel.ulpin}</p>
+              <div className="flex items-center gap-2 mt-1">
+                <StatusBadge status={selectedParcel.landUse} />
+                <StatusBadge status={selectedParcel.buildingPermission} />
+              </div>
+            </div>
+            <button onClick={clearSelection} className="text-slate-400 hover:text-slate-600 p-1">
+              <X className="w-4 h-4" />
+            </button>
           </div>
-          <span className="font-mono text-[11px] text-slate-400">{entry.ulpin}</span>
-        </div>
-
-        <p className="mt-2 text-xs text-slate-600 leading-relaxed">{entry.description}</p>
-
-        <div className="mt-3">
-          <div className="flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Confidence</span>
-            <span className="font-semibold text-slate-900">{entry.confidence}%</span>
-          </div>
-          <div className="mt-1 h-1.5 w-full rounded-full bg-slate-100 overflow-hidden">
-            <div
-              className={`h-full rounded-full ${entry.confidence >= 80 ? 'bg-red-500' : entry.confidence >= 65 ? 'bg-amber-500' : 'bg-blue-500'}`}
-              style={{ width: `${entry.confidence}%` }}
+        ) : (
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => { setSearchQuery(e.target.value); setShowResults(true) }}
+              onFocus={() => setShowResults(true)}
+              placeholder="Search by ULPIN, survey number, owner, or village..."
+              className="w-full pl-9 pr-3 py-2.5 text-sm border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-gov-500"
             />
-          </div>
-        </div>
-
-        <div className="mt-4 flex items-center gap-2">
-          <Button
-            variant="primary"
-            size="sm"
-            className="flex-1"
-            onClick={handleInvestigate}
-            disabled={localStatus === 'confirmed' || localStatus === 'dismissed'}
-          >
-            <Eye className="w-3.5 h-3.5" />
-            {localStatus === 'investigating' && entry.status !== 'investigating' ? 'Investigating' : 'Investigate'}
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            className="flex-1"
-            onClick={handleDismiss}
-            disabled={localStatus === 'dismissed'}
-          >
-            Dismiss
-          </Button>
-        </div>
-        {localStatus === 'investigating' && (
-          <div className="mt-3 flex items-center gap-1.5 text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-lg px-3 py-2">
-            <ShieldQuestion className="w-3.5 h-3.5" />
-            Referred to field verification — {entry.detected}
+            {showResults && searchResults.length > 0 && (
+              <div className="absolute left-0 right-0 mt-1 bg-white border border-slate-200 rounded-lg shadow-lg z-50 max-h-64 overflow-y-auto">
+                {searchResults.map((parcel) => (
+                  <button
+                    key={parcel.id}
+                    onClick={() => handleSelect(parcel)}
+                    className="w-full text-left px-3 py-2.5 hover:bg-slate-50 border-b border-slate-50 last:border-0 transition-colors"
+                  >
+                    <p className="text-xs font-mono text-gov-600">{parcel.ulpin}</p>
+                    <p className="text-sm text-slate-900 mt-0.5">{parcel.surveyNumber} — {parcel.village}, {parcel.district}</p>
+                    <p className="text-xs text-slate-500">{parcel.ownerName} · {parcel.area} {parcel.areaUnit}</p>
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
         )}
       </div>
-    </div>
-  )
-}
 
-export default function ChangeDetection() {
-  const [query, setQuery] = useState('')
-  const [filter, setFilter] = useState<'all' | 'new' | 'investigating' | 'confirmed' | 'dismissed'>('all')
+      {/* Pipeline + Results */}
+      {selectedParcel && (
+        <>
+          {/* Run Button */}
+          <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <p className="text-sm font-semibold text-slate-900">Run Change Detection</p>
+                <p className="text-xs text-slate-500 mt-0.5">
+                  This will compare imagery and cross-reference approved records for {selectedParcel.ulpin}
+                </p>
+              </div>
+              <Button
+                onClick={runDetection}
+                disabled={loading}
+                variant="primary"
+                size="md"
+              >
+                {loading ? (
+                  <>
+                    <Loader2 className="w-4 h-4 animate-spin" />
+                    Analyzing...
+                  </>
+                ) : (
+                  <>
+                    <Radar className="w-4 h-4" />
+                    Run AI Change Detection
+                  </>
+                )}
+              </Button>
+            </div>
+          </div>
 
-  const filtered = mockChanges.filter(c => {
-    const matchesQuery = c.ulpin.toLowerCase().includes(query.toLowerCase()) ||
-      c.type.toLowerCase().includes(query.toLowerCase())
-    const matchesFilter = filter === 'all' || c.status === filter
-    return matchesQuery && matchesFilter
-  })
+          {/* Step Pipeline */}
+          <div className="bg-white border border-slate-200 rounded-lg p-4">
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-4">Detection Pipeline</p>
+            <div className="space-y-3">
+              {STEPS.map((step, i) => {
+                const Icon = step.icon
+                const isActive = currentStep === i
+                const isComplete = currentStep > i
+                return (
+                  <div
+                    key={i}
+                    className={cn(
+                      'flex items-start gap-3 p-3 rounded-lg transition-colors',
+                      isActive && 'bg-gov-50 border border-gov-200',
+                      isComplete && 'bg-emerald-50/50',
+                      !isActive && !isComplete && 'bg-slate-50 border border-transparent'
+                    )}
+                  >
+                    <div className={cn(
+                      'w-7 h-7 rounded-full flex items-center justify-center shrink-0 mt-0.5 text-xs font-bold',
+                      isActive && 'bg-gov-600 text-white',
+                      isComplete && 'bg-emerald-500 text-white',
+                      !isActive && !isComplete && 'bg-slate-200 text-slate-500'
+                    )}>
+                      {isComplete ? <CheckCircle2 className="w-4 h-4" /> : i + 1}
+                    </div>
+                    <div className="flex-1 min-w-0">
+                      <div className="flex items-center gap-2">
+                        <Icon className={cn(
+                          'w-3.5 h-3.5',
+                          isActive ? 'text-gov-600' : isComplete ? 'text-emerald-600' : 'text-slate-400'
+                        )} />
+                        <p className={cn(
+                          'text-sm font-medium',
+                          isActive ? 'text-gov-700' : isComplete ? 'text-emerald-700' : 'text-slate-500'
+                        )}>
+                          {step.label}
+                        </p>
+                        {isActive && (
+                          <Loader2 className="w-3.5 h-3.5 text-gov-600 animate-spin ml-1" />
+                        )}
+                      </div>
+                      <p className="text-xs text-slate-400 mt-0.5">{step.desc}</p>
+                    </div>
+                  </div>
+                )
+              })}
+            </div>
+          </div>
 
-  return (
-    <div className="space-y-8">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-900">Satellite Change Detection</h1>
-        <p className="text-sm text-slate-500 mt-1">Automated analysis of satellite imagery to detect changes in land use and occupancy</p>
-      </div>
+          {/* Result */}
+          {result && (
+            <div className="bg-white border border-slate-200 rounded-lg p-5 space-y-5">
+              {/* Source label */}
+              <div className="flex items-center justify-between">
+                <Badge variant={result.source === 'ai' ? 'blue' : 'slate'}>
+                  {result.source === 'ai' ? 'AI-ASSISTED' : 'LOCAL DEMO'} · requires human verification
+                </Badge>
+                <StatusBadge status={result.riskLevel} />
+              </div>
 
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        <StatCard title="Total Scans" value={1247} icon={Satellite} iconColor="text-blue-600" change="+340 this month" changeType="up" />
-        <StatCard title="Changes Detected" value={89} icon={TriangleAlert} iconColor="text-amber-600" change="+12 since last scan" changeType="up" />
-        <StatCard title="Under Investigation" value={23} icon={ShieldQuestion} iconColor="text-orange-600" change="4 high priority" changeType="neutral" />
-        <StatCard title="Confirmed" value={45} icon={CheckCircle2} iconColor="text-emerald-600" change="6 resolved this week" changeType="up" />
-      </div>
+              {/* Summary */}
+              <div className={cn(
+                'rounded-lg p-4 border',
+                result.changeDetected ? 'bg-red-50 border-red-200' : 'bg-emerald-50 border-emerald-200'
+              )}>
+                <div className="flex items-center gap-2 mb-1">
+                  {result.changeDetected ? (
+                    <AlertTriangle className="w-5 h-5 text-red-600" />
+                  ) : (
+                    <CheckCircle2 className="w-5 h-5 text-emerald-600" />
+                  )}
+                  <p className={cn(
+                    'text-sm font-bold',
+                    result.changeDetected ? 'text-red-800' : 'text-emerald-800'
+                  )}>
+                    {result.changeType}
+                  </p>
+                </div>
+                <p className={cn(
+                  'text-xs mt-1',
+                  result.changeDetected ? 'text-red-600' : 'text-emerald-600'
+                )}>
+                  {result.details}
+                </p>
+                <div className="flex items-center gap-3 mt-3">
+                  <div className="text-xs text-slate-500">
+                    Confidence: <span className="font-bold text-slate-700">{result.confidence}%</span>
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Risk: <StatusBadge status={result.riskLevel} />
+                  </div>
+                </div>
+              </div>
 
-      <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center justify-between">
-        <div className="relative flex-1 max-w-sm">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-          <input
-            value={query}
-            onChange={e => setQuery(e.target.value)}
-            placeholder="Search by ULPIN or type..."
-            className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-slate-200 bg-white focus:outline-none focus:ring-2 focus:ring-gov-600 focus:border-transparent"
-          />
-        </div>
-        <div className="flex items-center gap-1.5 flex-wrap">
-          {(['all', 'new', 'investigating', 'confirmed', 'dismissed'] as const).map(f => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors ${
-                filter === f
-                  ? 'bg-gov-600 text-white border-gov-600'
-                  : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'
-              }`}
-            >
-              {f[0].toUpperCase() + f.slice(1)}
-            </button>
-          ))}
-        </div>
-      </div>
+              {/* Records comparison */}
+              <div>
+                <p className="text-xs font-semibold text-slate-500 uppercase tracking-wider mb-2">Approved Records Comparison</p>
+                <div className="grid grid-cols-2 gap-2">
+                  {result.comparedRecords.map((rec) => (
+                    <div
+                      key={rec.name}
+                      className={cn(
+                        'flex items-center justify-between p-2.5 rounded-lg border text-xs',
+                        rec.match ? 'bg-emerald-50 border-emerald-200' : 'bg-red-50 border-red-200'
+                      )}
+                    >
+                      <div>
+                        <p className="font-medium text-slate-700">{rec.name}</p>
+                        <p className="text-slate-500 mt-0.5 capitalize">{rec.status.replace(/_/g, ' ')}</p>
+                      </div>
+                      {rec.match ? (
+                        <CheckCircle2 className="w-4 h-4 text-emerald-500 shrink-0" />
+                      ) : (
+                        <AlertTriangle className="w-4 h-4 text-red-500 shrink-0" />
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-5">
-        {filtered.map(entry => (
-          <ChangeCard key={entry.id} entry={entry} />
-        ))}
-      </div>
+              {/* Officer Verification */}
+              <div className="border-t border-slate-200 pt-5">
+                <div className="flex items-center gap-2 mb-2">
+                  <ClipboardCheck className="w-4 h-4 text-gov-600" />
+                  <p className="text-sm font-semibold text-slate-900">Officer Verification</p>
+                </div>
+                <p className="text-xs text-slate-500 mb-3">
+                  An authorized officer must verify these findings before any enforcement or compliance action is initiated. AI-assisted results are indicative only and do not constitute legal findings.
+                </p>
+
+                {verificationStatus === 'none' ? (
+                  <div className="space-y-3">
+                    <textarea
+                      value={verificationNote}
+                      onChange={(e) => setVerificationNote(e.target.value)}
+                      placeholder="Add verification notes (optional)..."
+                      rows={2}
+                      className="w-full text-xs border border-slate-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-gov-500 focus:border-gov-500 resize-none"
+                    />
+                    <div className="flex gap-2">
+                      <Button
+                        variant="primary"
+                        size="sm"
+                        onClick={() => { setVerificationStatus('confirmed'); setVerificationNote('') }}
+                      >
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        Confirm
+                      </Button>
+                      <Button
+                        variant="danger"
+                        size="sm"
+                        onClick={() => { setVerificationStatus('flagged'); setVerificationNote('') }}
+                      >
+                        <AlertTriangle className="w-3.5 h-3.5" />
+                        Flag for Review
+                      </Button>
+                    </div>
+                  </div>
+                ) : (
+                  <div className={cn(
+                    'flex items-center gap-2 p-3 rounded-lg border',
+                    verificationStatus === 'confirmed' ? 'bg-emerald-50 border-emerald-200' : 'bg-amber-50 border-amber-200'
+                  )}>
+                    {verificationStatus === 'confirmed' ? (
+                      <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+                    ) : (
+                      <AlertTriangle className="w-4 h-4 text-amber-600 shrink-0" />
+                    )}
+                    <p className={cn(
+                      'text-xs font-medium',
+                      verificationStatus === 'confirmed' ? 'text-emerald-700' : 'text-amber-700'
+                    )}>
+                      {verificationStatus === 'confirmed'
+                        ? 'Findings confirmed by officer. No further action required at this time.'
+                        : 'Flagged for supervisory review. Investigation pending.'}
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }

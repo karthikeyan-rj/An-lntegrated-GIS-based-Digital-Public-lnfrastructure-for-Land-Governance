@@ -6,27 +6,18 @@ import Login from '@/pages/Login'
 import Dashboard from '@/pages/Dashboard'
 import GISExplorer from '@/pages/GISExplorer'
 import ParcelProfile from '@/pages/ParcelProfile'
+import Parcels from '@/pages/Parcels'
 import LandRecords from '@/pages/LandRecords'
-import Registration from '@/pages/Registration'
-import Encumbrance from '@/pages/Encumbrance'
-import Planning from '@/pages/Planning'
-import BuildingPermissions from '@/pages/BuildingPermissions'
-import LandUse from '@/pages/LandUse'
-import PropertyTax from '@/pages/PropertyTax'
-import UtilitiesPage from '@/pages/Utilities'
-import Restrictions from '@/pages/Restrictions'
-import Disputes from '@/pages/Disputes'
 import CitizenServices from '@/pages/CitizenServices'
-import ServiceRequests from '@/pages/ServiceRequests'
-import Analytics from '@/pages/Analytics'
+import Applications from '@/pages/Applications'
 import AIInsights from '@/pages/AIInsights'
 import ChangeDetection from '@/pages/ChangeDetection'
-import DepartmentDashboard from '@/pages/DepartmentDashboard'
-import APICenter from '@/pages/APICenter'
+import Integrations from '@/pages/Integrations'
 import AuditLogs from '@/pages/AuditLogs'
 import UsersRoles from '@/pages/UsersRoles'
-import TechnicalStandards from '@/pages/TechnicalStandards'
 import Settings from '@/pages/Settings'
+import Notifications from '@/pages/Notifications'
+import Profile from '@/pages/Profile'
 
 export default function App() {
   return (
@@ -39,28 +30,28 @@ export default function App() {
             <Route path="/dashboard" element={<Dashboard />} />
             <Route path="/explorer" element={<GISExplorer />} />
             <Route path="/parcel/:id" element={<ParcelProfile />} />
-            <Route path="/parcels" element={<GISExplorer />} />
+
+            {/* Land */}
+            <Route path="/parcels" element={<Parcels />} />
             <Route path="/land-records" element={<LandRecords />} />
-            <Route path="/registration" element={<Registration />} />
-            <Route path="/encumbrance" element={<Encumbrance />} />
-            <Route path="/planning" element={<Planning />} />
-            <Route path="/building-permissions" element={<BuildingPermissions />} />
-            <Route path="/land-use" element={<LandUse />} />
-            <Route path="/property-tax" element={<PropertyTax />} />
-            <Route path="/utilities" element={<UtilitiesPage />} />
-            <Route path="/restrictions" element={<Restrictions />} />
-            <Route path="/disputes" element={<Disputes />} />
+
+            {/* Services */}
             <Route path="/services" element={<CitizenServices />} />
-            <Route path="/applications" element={<ServiceRequests />} />
-            <Route path="/analytics" element={<Analytics />} />
+            <Route path="/applications" element={<Applications />} />
+
+            {/* Intelligence */}
             <Route path="/ai-insights" element={<AIInsights />} />
             <Route path="/change-detection" element={<ChangeDetection />} />
-            <Route path="/departments" element={<DepartmentDashboard />} />
-            <Route path="/apis" element={<APICenter />} />
+
+            {/* Administration */}
+            <Route path="/apis" element={<Integrations />} />
             <Route path="/audit" element={<AuditLogs />} />
             <Route path="/users" element={<UsersRoles />} />
-            <Route path="/technical-standards" element={<TechnicalStandards />} />
             <Route path="/settings" element={<Settings />} />
+
+            {/* Personal */}
+            <Route path="/notifications" element={<Notifications />} />
+            <Route path="/profile" element={<Profile />} />
           </Route>
         </Routes>
       </BrowserRouter>

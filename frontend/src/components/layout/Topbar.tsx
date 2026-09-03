@@ -1,9 +1,8 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate, useLocation } from 'react-router-dom'
-import { Search, Bell, ChevronDown, X } from 'lucide-react'
+import { Search, Bell, ChevronDown } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { searchParcels } from '@/data/parcels'
-import { cn } from '@/lib/utils'
 import { notifications as mockNotifications } from '@/data/services'
 
 export function Topbar() {
@@ -13,7 +12,6 @@ export function Topbar() {
   const [searchOpen, setSearchOpen] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const [searchResults, setSearchResults] = useState<ReturnType<typeof searchParcels>>([])
-  const [showNotifs, setShowNotifs] = useState(false)
   const searchRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -46,25 +44,16 @@ export function Topbar() {
       '/explorer': 'GIS Land Explorer',
       '/parcels': 'Parcels',
       '/land-records': 'Land Records',
-      '/registration': 'Registration',
-      '/encumbrance': 'Encumbrances',
-      '/disputes': 'Disputes',
-      '/planning': 'Master Plans',
-      '/land-use': 'Land Use & Zoning',
-      '/building-permissions': 'Building Permissions',
-      '/utilities': 'Utilities',
-      '/property-tax': 'Property Tax',
       '/services': 'Citizen Services',
-      '/applications': 'Service Requests',
-      '/analytics': 'Analytics',
+      '/applications': 'Applications',
       '/ai-insights': 'AI Insights',
       '/change-detection': 'Change Detection',
-      '/departments': 'Department Dashboard',
-      '/apis': 'API & Interoperability',
+      '/apis': 'Integrations',
       '/audit': 'Audit Logs',
       '/users': 'Users & Roles',
       '/settings': 'Settings',
-      '/technical-standards': 'Technical Standards',
+      '/notifications': 'Notifications',
+      '/profile': 'Profile',
     }
     if (location.pathname.startsWith('/parcel/')) return 'Parcel Profile'
     return map[location.pathname] || 'LandStack'
@@ -86,8 +75,9 @@ export function Topbar() {
 
           <div className="relative">
             <button
-              onClick={() => setShowNotifs(!showNotifs)}
+              onClick={() => navigate('/notifications')}
               className="relative p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors"
+              title="Notifications"
             >
               <Bell className="w-4 h-4" />
               {unreadCount > 0 && (
@@ -96,22 +86,6 @@ export function Topbar() {
                 </span>
               )}
             </button>
-            {showNotifs && (
-              <div className="absolute right-0 top-full mt-2 w-80 bg-white rounded-xl shadow-lift border border-slate-200 overflow-hidden z-50">
-                <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between">
-                  <span className="text-sm font-semibold text-slate-900">Notifications</span>
-                  <button onClick={() => setShowNotifs(false)} className="text-slate-400 hover:text-slate-600"><X className="w-4 h-4" /></button>
-                </div>
-                <div className="max-h-80 overflow-y-auto">
-                  {mockNotifications.map(n => (
-                    <div key={n.id} className={cn('px-4 py-3 border-b border-slate-50 hover:bg-slate-50 cursor-pointer', !n.read && 'bg-gov-50/30')}>
-                      <p className="text-xs font-medium text-slate-900">{n.title}</p>
-                      <p className="text-xs text-slate-500 mt-0.5 line-clamp-2">{n.message}</p>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
           </div>
 
           <div className="hidden sm:flex items-center gap-2 text-xs text-slate-600">
