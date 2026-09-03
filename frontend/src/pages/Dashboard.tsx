@@ -143,7 +143,7 @@ export default function Dashboard() {
                     <tr key={a._id || a.id} className="hover:bg-slate-50">
                       <td className="px-5 py-3 font-mono text-xs text-gov-700">{a.applicationId}</td>
                       <td className="px-5 py-3 text-slate-700">{a.serviceName}</td>
-                      <td className="px-5 py-3"><StatusBadge status={a.status} /></td>
+                      <td className="px-5 py-3"><StatusBadge status={a.status ?? a.currentStatus} /></td>
                       <td className="px-5 py-3 font-mono text-xs text-slate-500">{a.ulpin}</td>
                     </tr>
                   ))}

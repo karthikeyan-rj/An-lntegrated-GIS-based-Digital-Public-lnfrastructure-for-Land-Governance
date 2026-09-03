@@ -1,73 +1,57 @@
 /**
- * DEMO / PROTOTYPE parcel geometries.
+ * DEMO / PROTOTYPE parcel geometries (GeoJSON) — canonical source.
  *
- * These are SYNTHETIC demo polygons placed at real, known geographic locations
- * (centered on real city/town coordinates) so the map renders "like" a cadastral
- * layer. They are NOT official government cadastral data. They exist only to
- * demonstrate the parcel-centric interaction model and can be replaced by real
- * cadastral GeoJSON / WFS / OGC services later.
+ * Geometry + properties are built from the single authoritative dataset in
+ * `backend/src/data/demo/parcels.js` so that the map, the DB seed and the
+ * parcel profile all show identical, internally-consistent location data.
+ *
+ * These are SYNTHETIC demo polygons placed at real, known geographic
+ * locations. They are NOT official government cadastral data.
  */
 
-// Build a simple rectangular polygon around a center point with a given half-size.
-function rectPolygon(lat, lng, halfDeg) {
+import { DEMO_PARCELS, parcelGeometry } from './demo/parcels.js'
+
+function propertiesFor(p) {
   return {
-    type: 'Polygon',
-    coordinates: [
-      [
-        [lng - halfDeg, lat - halfDeg],
-        [lng - halfDeg, lat + halfDeg],
-        [lng + halfDeg, lat + halfDeg],
-        [lng + halfDeg, lat - halfDeg],
-        [lng - halfDeg, lat - halfDeg],
-      ],
-    ],
+    id: p.id,
+    ulpin: p.ulpin,
+    surveyNumber: p.surveyNumber,
+    state: p.state,
+    district: p.district,
+    taluk: p.taluk,
+    village: p.village,
+    landUse: p.landUse,
+    zoning: p.zoning,
+    area: p.area,
+    areaUnit: p.areaUnit,
+    ownershipStatus: p.ownershipStatus,
+    ownerName: p.ownerName,
+    encumbranceStatus: p.encumbranceStatus,
+    disputeStatus: p.disputeStatus,
+    buildingPermission: p.buildingPermission,
+    propertyTaxStatus: p.propertyTaxStatus,
+    pattaNumber: p.pattaNumber,
+    verificationStatus: p.verificationStatus,
+    restrictions: p.restrictions || [],
+    utilityElectricity: (p.utilities && p.utilities.electricity) || false,
+    utilityWater: (p.utilities && p.utilities.water) || false,
+    utilitySewerage: (p.utilities && p.utilities.sewerage) || false,
+    isDemo: true,
   }
 }
 
-// Demo parcels keyed by the stable demo id used across the frontend (p1..p10).
-export const DEMO_PARCELLS = [
-  { id: 'p1', lat: 9.9252, lng: 78.1198, half: 0.0009 },
-  { id: 'p2', lat: 13.0827, lng: 80.2707, half: 0.0006 },
-  { id: 'p3', lat: 11.0168, lng: 76.9558, half: 0.0011 },
-  { id: 'p4', lat: 10.7905, lng: 78.7047, half: 0.0008 },
-  { id: 'p5', lat: 30.7333, lng: 76.7794, half: 0.0006 },
-  { id: 'p6', lat: 13.0063, lng: 80.2574, half: 0.0008 },
-  { id: 'p7', lat: 9.9195, lng: 78.1141, half: 0.0008 },
-  { id: 'p8', lat: 11.0291, lng: 76.9973, half: 0.0007 },
-  { id: 'p9', lat: 30.7525, lng: 76.7841, half: 0.0007 },
-  { id: 'p10', lat: 10.86, lng: 78.68, half: 0.001 },
-]
-
-const properties = {
-  p1: { ulpin: 'TN-MDU-RV-38472916', surveyNumber: '123/4A', landUse: 'Residential', area: 2.47, ownershipStatus: 'Verified' },
-  p2: { ulpin: 'TN-CHN-PM-72618345', surveyNumber: '56/2B', landUse: 'Commercial', area: 0.85, ownershipStatus: 'Verified' },
-  p3: { ulpin: 'TN-CBE-GN-91527483', surveyNumber: '78/1', landUse: 'Agricultural', area: 5.12, ownershipStatus: 'Verified' },
-  p4: { ulpin: 'TN-TRZ-KK-45183627', surveyNumber: '34/3C', landUse: 'Residential', area: 1.25, ownershipStatus: 'Pending' },
-  p5: { ulpin: 'CH-CHD-SE-05839271', surveyNumber: 'Chd/112', landUse: 'Residential', area: 0.33, ownershipStatus: 'Verified' },
-  p6: { ulpin: 'TN-CHN-AD-68294015', surveyNumber: '45/8', landUse: 'Institutional', area: 1.8, ownershipStatus: 'Verified' },
-  p7: { ulpin: 'TN-MDU-VK-21958374', surveyNumber: '91/2A', landUse: 'Industrial', area: 3.6, ownershipStatus: 'Verified' },
-  p8: { ulpin: 'TN-CBE-PE-57431028', surveyNumber: '67/4', landUse: 'Commercial', area: 0.65, ownershipStatus: 'Verified' },
-  p9: { ulpin: 'CH-CHD-MZ-83726154', surveyNumber: 'Chd/208', landUse: 'Mixed', area: 0.5, ownershipStatus: 'Verified' },
-  p10: { ulpin: 'TN-TRZ-ML-74029586', surveyNumber: '15/6', landUse: 'Forest', area: 8.75, ownershipStatus: 'Verified' },
-}
-
-function buildFeature(id) {
-  const def = DEMO_PARCELLS.find((d) => d.id === id)
-  if (!def) throw new Error(`Unknown demo parcel ${id}`)
+function buildFeature(p) {
   return {
     type: 'Feature',
-    id,
-    properties: {
-      id,
-      ...properties[id],
-    },
-    geometry: rectPolygon(def.lat, def.lng, def.half),
+    id: p.id,
+    properties: propertiesFor(p),
+    geometry: parcelGeometry(p),
   }
 }
 
 export const demoParcelGeoJSON = {
   type: 'FeatureCollection',
-  features: Object.keys(properties).map(buildFeature),
+  features: DEMO_PARCELS.map(buildFeature),
 }
 
 export default demoParcelGeoJSON

@@ -75,6 +75,10 @@ export const api = {
   parcelById: (id: string) => request<{ parcel: any; governance: any }>(`/parcels/${id}`),
   parcelGovernance: (id: string) => request<any>(`/parcels/${id}/governance`),
   layers: () => request<any>('/layers'),
+  // Administrative boundaries (real Tamil Nadu state/district/taluk geometry)
+  geoboundariesIndex: () => request<any>('/geoboundaries'),
+  geoboundaries: (kind: 'state' | 'districts' | 'taluks') =>
+    request<GeoJSON.FeatureCollection & { source?: string; license?: string }>(`/geoboundaries/${kind}`),
 
   // Governance records
   records: (resource: string, ulpin?: string) =>

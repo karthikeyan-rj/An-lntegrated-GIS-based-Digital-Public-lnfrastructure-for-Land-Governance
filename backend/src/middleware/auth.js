@@ -28,9 +28,11 @@ export async function protect(req, res, next) {
 
 /** Restrict a route to one or more roles. Must run after `protect`. */
 export function authorize(...roles) {
+  // Accept either authorize('a','b') or authorize(['a','b']) (call sites pass an array).
+  const allowed = roles.flat()
   return (req, res, next) => {
     if (!req.user) return res.status(401).json({ message: 'Not authorized' })
-    if (!roles.includes(req.user.role)) {
+    if (!allowed.includes(req.user.role)) {
       return res.status(403).json({ message: `Role '${req.user.role}' is not permitted` })
     }
     next()

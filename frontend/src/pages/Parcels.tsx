@@ -29,35 +29,36 @@ function getLandUseColor(landUse: string): string {
 function toParcel(feature: FeatureProps & { id?: string }): Parcel | null {
   const p = feature.properties || {}
   if (!p.ulpin) return null
-  const props = p as Record<string, string | number>
+  const props = p as Record<string, string | number | string[] | { electricity?: boolean; water?: boolean; sewerage?: boolean; gas?: boolean; telecom?: boolean }>
+  const utilities = (props.utilities as { electricity?: boolean; water?: boolean; sewerage?: boolean; gas?: boolean; telecom?: boolean }) || {}
   return {
     id: (feature.id as string) || String(p.id) || String(p.ulpin),
     ulpin: String(p.ulpin),
     surveyNumber: String(p.surveyNumber || '-'),
-    village: String(p.village || 'Demo Village'),
-    taluk: String(p.taluk || '-'),
-    district: String(p.district || '-'),
-    state: String(p.state || '-'),
-    area: Number(p.area || 0),
-    areaUnit: (p.areaUnit as Parcel['areaUnit']) || 'acres',
+    village: String(props.village || '-'),
+    taluk: String(props.taluk || '-'),
+    district: String(props.district || '-'),
+    state: String(props.state || '-'),
+    area: Number(props.area || 0),
+    areaUnit: (props.areaUnit as Parcel['areaUnit']) || 'acres',
     coordinates: { lat: 0, lng: 0 },
-    landUse: (p.landUse as Parcel['landUse']) || 'residential',
-    zoning: 'R1',
-    ownershipStatus: (p.ownershipStatus as Parcel['ownershipStatus']) || 'verified',
-    ownerName: String(p.ownerName || p.owner || 'Demo Owner'),
+    landUse: (props.landUse as Parcel['landUse']) || 'residential',
+    zoning: (props.zoning as Parcel['zoning']) || 'R1',
+    ownershipStatus: (props.ownershipStatus as Parcel['ownershipStatus']) || 'verified',
+    ownerName: String(props.ownerName || 'Demo Owner'),
     ownerFatherName: '',
     ownershipType: 'self',
-    encumbranceStatus: 'clear',
-    disputeStatus: 'none',
-    propertyTaxStatus: 'paid',
-    buildingPermission: 'approved',
-    pattaNumber: String(p.pattaNumber || '-'),
-    classification: String(p.classification || '-'),
-    verificationStatus: 'digitally_verified',
+    encumbranceStatus: (props.encumbranceStatus as Parcel['encumbranceStatus']) || 'clear',
+    disputeStatus: (props.disputeStatus as Parcel['disputeStatus']) || 'none',
+    propertyTaxStatus: (props.propertyTaxStatus as Parcel['propertyTaxStatus']) || 'paid',
+    buildingPermission: (props.buildingPermission as Parcel['buildingPermission']) || 'none',
+    pattaNumber: String(props.pattaNumber || '-'),
+    classification: String(props.classification || '-'),
+    verificationStatus: (props.verificationStatus as Parcel['verificationStatus']) || 'digitally_verified',
     lastUpdated: '',
     registeredDate: '',
-    restrictions: [],
-    utilities: { electricity: true, water: true, sewerage: true, gas: false, telecom: true },
+    restrictions: (props.restrictions as string[]) || [],
+    utilities: { electricity: !!utilities.electricity, water: !!utilities.water, sewerage: !!utilities.sewerage, gas: !!utilities.gas, telecom: !!utilities.telecom },
   }
 }
 

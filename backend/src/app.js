@@ -3,6 +3,7 @@ import cors from 'cors'
 import mongoose from 'mongoose'
 import authRoutes from './routes/auth.js'
 import parcelRoutes from './routes/parcels.js'
+import geoboundariesRoutes from './routes/geoboundaries.js'
 import { parcelController } from './controllers/parcelController.js'
 
 const parcelControllerLayers = (req, res) => parcelController.getLayers(req, res)
@@ -18,12 +19,19 @@ export function createApp() {
   app.use(cors({ origin: corsWhitelist() }))
   app.use(express.json({ limit: '2mb' }))
 
-  // Health check includes DB status
-  app.get('/api/health', (_req, res) => {
+  // Health check reflects the real live state of the database connection.
+  app.get('/api/health', async (_req, res) => {
+    const connected = (() => {
+      try {
+        return mongoose.connection.readyState === 1
+      } catch {
+        return false
+      }
+    })()
     res.json({
-      status: 'ok',
+      status: connected ? 'ok' : 'error',
       service: 'LandStack API',
-      db: mongoose.connection.readyState === 1 ? 'connected' : 'disconnected',
+      database: connected ? 'connected' : 'disconnected',
       time: new Date().toISOString(),
     })
   })
@@ -34,6 +42,9 @@ export function createApp() {
   // GIS / Parcels
   app.use('/api/layers', parcelControllerLayers)
   app.use('/api/parcels', parcelRoutes)
+
+  // GIS / Administrative boundaries (real Tamil Nadu state/district/taluk geometry)
+  app.use('/api/geoboundaries', geoboundariesRoutes)
 
   // Applications (citizen + officer workflow)
   app.use('/api/applications', applicationsRoutes)

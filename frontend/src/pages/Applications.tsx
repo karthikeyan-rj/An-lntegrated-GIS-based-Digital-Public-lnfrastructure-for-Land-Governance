@@ -51,6 +51,10 @@ export default function Applications() {
   const [actionMsg, setActionMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
   const [aiReview, setAiReview] = useState<{ id: string; data: any } | null>(null)
   const [remark, setRemark] = useState('')
+  const [confirmAction, setConfirmAction] = useState<{ kind: 'approve' | 'reject'; id: string; label: string } | null>(null)
+
+  const TERMINAL = ['APPROVED', 'REJECTED', 'CANCELLED']
+  const isTerminal = (s?: string) => TERMINAL.includes(s || '')
 
   async function load() {
     setLoading(true)
@@ -100,6 +104,13 @@ export default function Applications() {
   }, [apps, search, statusFilter])
 
   const selected = apps.find(a => a._id === selectedId) || null
+
+  // Clear confirm when selection changes
+  useEffect(() => {
+    setConfirmAction(null)
+    setActionMsg(null)
+    setAiReview(null)
+  }, [selectedId])
 
   async function act(id: string, fn: () => Promise<any>, successText: string) {
     setActing(id)
@@ -196,7 +207,7 @@ export default function Applications() {
             <Detail label="Priority" value={<StatusBadge status={(selected.priority || 'medium')} />} />
           </div>
 
-          {isOfficer && (
+          {isOfficer && !isTerminal(selected.status) && (
             <div className="px-5 py-4 border-t border-slate-100 space-y-3">
               <div className="flex flex-wrap items-center gap-2">
                 <label className="text-sm font-medium text-slate-700">Advance to:</label>
@@ -207,11 +218,11 @@ export default function Applications() {
                   </Button>
                 ))}
                 <Button variant="primary" size="sm" disabled={acting === selected._id}
-                  onClick={() => act(selected._id, () => api.approveApplication(selected._id, remark), 'Application approved')}>
+                  onClick={() => setConfirmAction({ kind: 'approve', id: selected._id, label: selected.applicationId })}>
                   <Check className="w-4 h-4" /> Approve
                 </Button>
                 <Button variant="danger" size="sm" disabled={acting === selected._id}
-                  onClick={() => act(selected._id, () => api.rejectApplication(selected._id, remark || 'Rejected by officer'), 'Application rejected')}>
+                  onClick={() => setConfirmAction({ kind: 'reject', id: selected._id, label: selected.applicationId })}>
                   <X className="w-4 h-4" /> Reject
                 </Button>
               </div>
@@ -224,6 +235,40 @@ export default function Applications() {
               <Button variant="ghost" size="sm" disabled={acting === selected._id} onClick={() => runAiReview(selected)}>
                 <Brain className="w-4 h-4" /> Run AI Review (assistive)
               </Button>
+            </div>
+          )}
+          {isOfficer && isTerminal(selected.status) && (
+            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50/50">
+              <p className="text-sm text-slate-500">
+                This application is <span className="font-medium text-slate-700">{STATUS_LABELS[selected.status] || selected.status}</span>. No further actions are available.
+              </p>
+            </div>
+          )}
+
+          {/* Inline confirmation dialog for approve/reject */}
+          {confirmAction && (
+            <div className="px-5 py-4 border-t border-slate-100 bg-amber-50/60 space-y-3">
+              <p className="text-sm font-medium text-slate-800">
+                {confirmAction.kind === 'approve'
+                  ? `Approve application ${confirmAction.label}?`
+                  : `Reject application ${confirmAction.label}?`}
+              </p>
+              <div className="flex items-center gap-2">
+                <Button variant={confirmAction.kind === 'approve' ? 'primary' : 'danger'} size="sm" disabled={acting === confirmAction.id}
+                  onClick={async () => {
+                    if (confirmAction.kind === 'approve') {
+                      await act(confirmAction.id, () => api.approveApplication(confirmAction.id, remark), 'Application approved')
+                    } else {
+                      await act(confirmAction.id, () => api.rejectApplication(confirmAction.id, remark || 'Rejected by officer'), 'Application rejected')
+                    }
+                    setConfirmAction(null)
+                  }}>
+                  {confirmAction.kind === 'approve' ? <><Check className="w-4 h-4" /> Confirm Approve</> : <><X className="w-4 h-4" /> Confirm Reject</>}
+                </Button>
+                <Button variant="ghost" size="sm" onClick={() => setConfirmAction(null)}>
+                  Cancel
+                </Button>
+              </div>
             </div>
           )}
 

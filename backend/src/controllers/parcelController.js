@@ -2,16 +2,20 @@ import mongoose from 'mongoose'
 import Parcel from '../models/Parcel.js'
 import { recordAudit } from '../services/auditService.js'
 import demoParcelGeoJSON from '../data/demoParcels.js'
+import { DEMO_PARCELS } from '../data/demo/parcels.js'
 
 const dbReady = () => mongoose.connection.readyState === 1
+
+/** Map ulpin → canonical demo id (p1..p10) so the map links to the right profile. */
+const demoIdByUlpin = Object.fromEntries(DEMO_PARCELS.map((p) => [p.ulpin, p.id]))
 
 /** Build a GeoJSON feature from a DB parcel. */
 function parcelToFeature(p) {
   return {
     type: 'Feature',
-    id: p.id || p._id.toString(),
+    id: demoIdByUlpin[p.ulpin] || p.id || p._id.toString(),
     properties: {
-      id: p.id || p._id.toString(),
+      id: demoIdByUlpin[p.ulpin] || p.id || p._id.toString(),
       ulpin: p.ulpin,
       surveyNumber: p.surveyNumber,
       landUse: p.landUse,
@@ -29,6 +33,9 @@ function parcelToFeature(p) {
       district: p.district,
       state: p.state,
       ownerName: p.ownerName,
+      verificationStatus: p.verificationStatus,
+      restrictions: p.restrictions || [],
+      utilities: p.utilities || {},
       isDemo: !!p.isDemo,
     },
     geometry: p.geometry,
@@ -105,13 +112,20 @@ async function resolveParcel(id) {
     ulpin: props.ulpin,
     surveyNumber: props.surveyNumber,
     landUse: props.landUse,
+    zoning: props.zoning,
     area: props.area,
-    areaUnit: 'acres',
+    areaUnit: props.areaUnit,
     ownershipStatus: props.ownershipStatus,
+    ownerName: props.ownerName,
     village: props.village || 'Demo Village',
     taluk: props.taluk || '-',
     district: props.district || 'Demo District',
     state: props.state || 'Demo State',
+    buildingPermission: props.buildingPermission,
+    propertyTaxStatus: props.propertyTaxStatus,
+    disputeStatus: props.disputeStatus,
+    restrictions: props.restrictions || [],
+    utilities: props.utilities || {},
     geometry: feature.geometry,
     isDemo: true,
   }

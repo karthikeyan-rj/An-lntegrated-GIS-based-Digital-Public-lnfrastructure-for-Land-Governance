@@ -23,14 +23,17 @@ export const STATUS_ORDER = {
 const FORWARD = [
   ['DRAFT', 'SUBMITTED'],
   ['SUBMITTED', 'UNDER_REVIEW'],
+  ['SUBMITTED', 'APPROVED'],
   ['UNDER_REVIEW', 'DOCUMENT_VERIFICATION'],
+  ['UNDER_REVIEW', 'FIELD_VERIFICATION'],
+  ['UNDER_REVIEW', 'APPROVED'],
   ['DOCUMENT_VERIFICATION', 'FIELD_VERIFICATION'],
   ['DOCUMENT_VERIFICATION', 'ACTION_REQUIRED'],
+  ['DOCUMENT_VERIFICATION', 'APPROVED'],
   ['ACTION_REQUIRED', 'DOCUMENT_VERIFICATION'],
   ['ACTION_REQUIRED', 'UNDER_REVIEW'],
   ['FIELD_VERIFICATION', 'APPROVED'],
   ['FIELD_VERIFICATION', 'REJECTED'],
-  ['DOCUMENT_VERIFICATION', 'APPROVED'],
   ['UNDER_REVIEW', 'ACTION_REQUIRED'],
   ['SUBMITTED', 'ACTION_REQUIRED'],
 ]
@@ -106,3 +109,48 @@ export async function transitionApplication(app, toStatus, { user, remarks, acto
 
 export const workflowService = { isTransitionValid, transitionApplication }
 export default workflowService
+
+/**
+ * Workflow authorization helpers.
+ *
+ * Roles are mapped to the department whose applications they may action.
+ * `administrator` can act on any department; the role-to-department map mirrors
+ * the `SERVICE_DEPT` routing used when creating applications, so the backend is
+ * authoritative for who may approve/reject/move an application.
+ */
+export const ROLE_DEPT = {
+  revenue_officer: 'Revenue',
+  registration_officer: 'Registration',
+  planning_officer: 'Planning',
+  tax_officer: 'Tax',
+  administrator: '*', // any department
+  citizen: '*',
+}
+
+/** True if `role` may action applications in the given `appDept`. */
+export function canActOnDept(role, appDept) {
+  const d = ROLE_DEPT[role]
+  if (d === '*') return true
+  return !!d && String(d).toLowerCase() === String(appDept || '').toLowerCase()
+}
+
+/** Human label for the department an officer role belongs to. */
+export function deptLabel(role) {
+  return ROLE_DEPT[role] && ROLE_DEPT[role] !== '*' ? ROLE_DEPT[role] : role
+}
+
+/** Is this user (role) currently permitted to approve an application in `appDept` from `status`? */
+export function canApprove(role, status, appDept) {
+  if (!canActOnDept(role, appDept)) return false
+  if (role === 'citizen') return false
+  if (status === 'APPROVED' || status === 'REJECTED' || status === 'CANCELLED') return false
+  return isTransitionValid(status, 'APPROVED')
+}
+
+/** Is this user (role) permitted to reject an application in `appDept` from `status`? */
+export function canReject(role, status, appDept) {
+  if (!canActOnDept(role, appDept)) return false
+  if (role === 'citizen') return false
+  if (status === 'APPROVED' || status === 'REJECTED' || status === 'CANCELLED') return false
+  return ['SUBMITTED', 'UNDER_REVIEW', 'DOCUMENT_VERIFICATION', 'FIELD_VERIFICATION', 'ACTION_REQUIRED'].includes(status)
+}

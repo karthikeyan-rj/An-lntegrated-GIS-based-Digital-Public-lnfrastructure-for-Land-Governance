@@ -7,6 +7,7 @@ import {
   PropertyTax, UtilityInfo, Dispute, Restriction, Application, Department, Notification,
 } from '../models/LandModels.js'
 import demoParcelGeoJSON from '../data/demoParcels.js'
+import { DEMO_PARCELS } from '../data/demo/parcels.js'
 
 /**
  * Seeds the MongoDB collections ("tables") with clearly-labelled DEMO data
@@ -46,22 +47,40 @@ async function seed() {
   const citizen = users.find((u) => u.role === 'citizen')
   console.log(`✔ users: ${users.length} demo users (password for all: demo1234)`)
 
-  // 2. Parcels
+  // 2. Parcels (canonical demo dataset — internally consistent locations)
   await Parcel.deleteMany({ isDemo: true })
-  const parcelDocs = demoParcelGeoJSON.features.map((f) => ({
-    ulpin: f.properties.ulpin,
-    surveyNumber: f.properties.surveyNumber,
-    village: 'Demo Village',
-    taluk: 'Demo Taluk',
-    district: deriveDistrict(f),
-    state: f.properties.ulpin.startsWith('CH') ? 'Chandigarh' : 'Tamil Nadu',
-    area: f.properties.area,
-    areaUnit: 'acres',
-    landUse: String(f.properties.landUse || 'residential').toLowerCase(),
-    ownershipStatus: String(f.properties.ownershipStatus || 'verified').toLowerCase(),
-    isDemo: true,
-    geometry: f.geometry,
-  }))
+  const canonicalById = Object.fromEntries(DEMO_PARCELS.map((p) => [p.id, p]))
+  const parcelDocs = demoParcelGeoJSON.features.map((f) => {
+    const c = canonicalById[f.properties.id] || {}
+    return {
+      ulpin: f.properties.ulpin,
+      surveyNumber: f.properties.surveyNumber,
+      village: c.village || 'Demo Village',
+      taluk: c.taluk || 'Demo Taluk',
+      district: c.district || 'Demo District',
+      state: c.state || 'Demo State',
+      coordinates: c.coordinates,
+      area: f.properties.area,
+      areaUnit: f.properties.areaUnit || 'acres',
+      landUse: String(f.properties.landUse || 'residential').toLowerCase(),
+      zoning: c.zoning || '',
+      ownershipStatus: String(f.properties.ownershipStatus || 'verified').toLowerCase(),
+      ownerName: c.ownerName || 'Demo Owner',
+      ownerFatherName: c.ownerFatherName || '',
+      ownershipType: c.ownershipType || 'self',
+      encumbranceStatus: c.encumbranceStatus || 'clear',
+      disputeStatus: c.disputeStatus || 'none',
+      buildingPermission: c.buildingPermission || 'none',
+      propertyTaxStatus: c.propertyTaxStatus || 'paid',
+      pattaNumber: c.pattaNumber || '',
+      classification: c.classification || '',
+      verificationStatus: f.properties.verificationStatus || 'digitally_verified',
+      restrictions: c.restrictions || [],
+      utilities: c.utilities || {},
+      isDemo: true,
+      geometry: f.geometry,
+    }
+  })
   const parcels = await Parcel.insertMany(parcelDocs)
   console.log(`✔ parcels: ${parcels.length} demo parcels with geometry`)
 
@@ -180,16 +199,6 @@ async function seed() {
   console.log('\n✔ Seeding complete. Collections created/updated:')
   for (const name of Object.keys(COLLECTIONS)) console.log(`  - ${name.toLowerCase()}`)
   process.exit(0)
-}
-
-function deriveDistrict(f) {
-  const u = f.properties.ulpin
-  if (u.includes('MDU')) return 'Madurai'
-  if (u.includes('CHN')) return 'Chennai'
-  if (u.includes('CBE')) return 'Coimbatore'
-  if (u.includes('TRZ')) return 'Tiruchirappalli'
-  if (u.includes('CH-')) return 'Chandigarh'
-  return 'Demo District'
 }
 
 seed().catch((err) => {

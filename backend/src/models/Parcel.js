@@ -19,6 +19,8 @@ const parcelSchema = new mongoose.Schema(
     zoning: String,
     ownershipStatus: String,
     ownerName: String,
+    ownerFatherName: String,
+    ownershipType: String,
     encumbranceStatus: String,
     disputeStatus: String,
     buildingPermission: String,
@@ -26,6 +28,21 @@ const parcelSchema = new mongoose.Schema(
     pattaNumber: String,
     classification: String,
     verificationStatus: String,
+    restrictions: { type: [String], default: [] },
+    utilities: {
+      type: {
+        electricity: { type: Boolean, default: false },
+        water: { type: Boolean, default: false },
+        sewerage: { type: Boolean, default: false },
+        gas: { type: Boolean, default: false },
+        telecom: { type: Boolean, default: false },
+      },
+      default: {},
+    },
+    coordinates: {
+      lat: Number,
+      lng: Number,
+    },
     isDemo: { type: Boolean, default: true },
     // GeoJSON geometry
     geometry: {

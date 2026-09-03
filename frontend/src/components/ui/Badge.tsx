@@ -25,13 +25,14 @@ export function Badge({ variant = 'slate', children, className }: BadgeProps) {
   )
 }
 
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: { status?: string | null }) {
   const map: Record<string, BadgeVariant> = {
     verified: 'green', paid: 'green', approved: 'green', completed: 'green', registered: 'green', success: 'green', digitally_verified: 'green',
     pending: 'amber', under_review: 'amber', document_verification: 'amber', department_review: 'amber', field_verification: 'amber', investigating: 'amber', requires_update: 'amber',
     rejected: 'red', dispute: 'red', disputed: 'red', active: 'red', encumbered: 'red', mortgaged: 'red', overdue: 'red', failure: 'red', high: 'red',
     none: 'slate', clear: 'green', unverified: 'amber', new: 'blue', submitted: 'blue', info: 'blue', resolved: 'green', dismissed: 'slate',
   }
+  if (!status) return <Badge variant="slate">N/A</Badge>
   const variant = map[status] || 'slate'
   const label = status.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())
   return <Badge variant={variant}>{label}</Badge>

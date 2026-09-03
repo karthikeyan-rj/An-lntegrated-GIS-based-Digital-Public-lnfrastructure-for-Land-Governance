@@ -171,6 +171,21 @@ export const APPLICATION_STATUS = [
   'CANCELLED',
 ]
 
+// Dedicated subdocument schema for application documents. Declared explicitly
+// because it contains a field literally named `type`; in Mongoose `type` is the
+// reserved type-key, so an inline object would otherwise collapse this array to
+// [String] and raise "Cast to [string] failed" on object documents.
+export const documentSchema = new mongoose.Schema(
+  {
+    name: String,
+    type: { type: String, default: 'generic' },
+    status: { type: String, default: 'uploaded' },
+    url: String,
+    verifiedBy: String,
+  },
+  { _id: false }
+)
+
 export const applicationsSchema = new mongoose.Schema(
   {
     parcel: { type: mongoose.Schema.Types.ObjectId, ref: 'Parcel' },
@@ -189,15 +204,7 @@ export const applicationsSchema = new mongoose.Schema(
     assigneeName: String,
     priority: { type: String, enum: ['low', 'medium', 'high', 'urgent'], default: 'medium' },
     // documents: [{ name, type, status: uploaded|verified|rejected, url }]
-    documents: [
-      {
-        name: String,
-        type: String,
-        status: { type: String, default: 'uploaded' },
-        url: String,
-        verifiedBy: String,
-      },
-    ],
+    documents: { type: [documentSchema], default: [] },
     notes: String,
     reason: String, // rejection / request-for-information reason
     isDemo: { type: Boolean, default: false },

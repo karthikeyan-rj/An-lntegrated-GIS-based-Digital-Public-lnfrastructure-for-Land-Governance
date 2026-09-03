@@ -1,7 +1,7 @@
 import { Application } from '../models/LandModels.js'
 import { User } from '../models/User.js'
 import { aiService } from '../services/aiService.js'
-import { workflowService } from '../services/workflowService.js'
+import { workflowService, canActOnDept, deptLabel } from '../services/workflowService.js'
 import { recordAudit } from '../services/auditService.js'
 import { notify } from '../services/notificationService.js'
 
@@ -143,6 +143,15 @@ export async function updateStatus(req, res) {
     const app = await Application.findById(req.params.id)
     if (!app) return res.status(404).json({ message: 'Application not found' })
 
+    if (!canActOnDept(req.user.role, app.department)) {
+      return res.status(403).json({
+        message: `Only the ${deptLabel(req.user.role)} department can manage this ${app.department} application.`,
+      })
+    }
+    if (app.status === 'APPROVED' || app.status === 'REJECTED' || app.status === 'CANCELLED') {
+      return res.status(422).json({ message: `This application is already ${app.status.toLowerCase().replace(/_/g, ' ')} and cannot be changed.` })
+    }
+
     const updated = await workflowService.transitionApplication(app, status, {
       user: req.user,
       remarks: remarks || '',
@@ -162,6 +171,22 @@ export async function approve(req, res) {
     if (req.user.role === 'citizen') return res.status(403).json({ message: 'Not permitted' })
     const app = await Application.findById(req.params.id)
     if (!app) return res.status(404).json({ message: 'Application not found' })
+
+    if (!canActOnDept(req.user.role, app.department)) {
+      return res.status(403).json({
+        message: `Only the ${deptLabel(req.user.role)} department can approve this ${app.department} application.`,
+      })
+    }
+    if (app.status === 'APPROVED') return res.status(422).json({ message: 'Application is already approved.' })
+    if (app.status === 'REJECTED' || app.status === 'CANCELLED') {
+      return res.status(422).json({ message: `Cannot approve an application that was ${app.status.toLowerCase().replace(/_/g, ' ')}.` })
+    }
+    if (!workflowService.isTransitionValid(app.status, 'APPROVED')) {
+      return res.status(422).json({
+        message: `Application must be reviewed before approval (current status: ${app.status.replace(/_/g, ' ').toLowerCase()}).`,
+      })
+    }
+
     const updated = await workflowService.transitionApplication(app, 'APPROVED', {
       user: req.user, remarks: req.body?.remarks || 'Approved by officer', actorRole: req.user.role,
       notifyMessage: `Your application ${app.applicationId} has been approved.`,
@@ -178,6 +203,17 @@ export async function reject(req, res) {
     if (req.user.role === 'citizen') return res.status(403).json({ message: 'Not permitted' })
     const app = await Application.findById(req.params.id)
     if (!app) return res.status(404).json({ message: 'Application not found' })
+
+    if (!canActOnDept(req.user.role, app.department)) {
+      return res.status(403).json({
+        message: `Only the ${deptLabel(req.user.role)} department can reject this ${app.department} application.`,
+      })
+    }
+    if (app.status === 'REJECTED') return res.status(422).json({ message: 'Application is already rejected.' })
+    if (app.status === 'APPROVED' || app.status === 'CANCELLED') {
+      return res.status(422).json({ message: `Cannot reject an application that was ${app.status.toLowerCase().replace(/_/g, ' ')}.` })
+    }
+
     const reason = req.body?.reason || 'Rejected by officer'
     app.reason = reason
     const updated = await workflowService.transitionApplication(app, 'REJECTED', {

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Settings as SettingsIcon, Bell, Shield, KeyRound, Monitor, Info } from 'lucide-react'
+import { Settings as SettingsIcon, Bell, Shield, KeyRound, Monitor, Info, CheckCircle2 } from 'lucide-react'
 import { Card } from '@/components/ui/Card'
 import { Button } from '@/components/ui/Button'
 import { Badge } from '@/components/ui/Badge'
@@ -48,6 +48,12 @@ export default function Settings() {
   const [pushNotif, setPushNotif] = useState(false)
   const [twoFactor, setTwoFactor] = useState(true)
   const [theme, setTheme] = useState<'light' | 'dark'>('light')
+  const [saved, setSaved] = useState(false)
+
+  const handleSave = () => {
+    setSaved(true)
+    window.setTimeout(() => setSaved(false), 2500)
+  }
 
   return (
     <div className="space-y-8 relative">
@@ -61,7 +67,12 @@ export default function Settings() {
         </div>
       </div>
 
-      <form className="space-y-6" onSubmit={e => e.preventDefault()}>
+      <form className="space-y-6" onSubmit={e => { e.preventDefault(); handleSave() }}>
+        {saved && (
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 text-xs font-medium">
+            <CheckCircle2 className="w-4 h-4" /> Settings saved (demo — local changes only).
+          </div>
+        )}
         <Card title="Platform Settings" subtitle="Core platform identity and regional defaults" action={<SettingsIcon className="w-4 h-4 text-slate-400" />}>
           <div className={fieldContainer}>
             <TextField label="Platform Name" defaultValue="LandStack" />
