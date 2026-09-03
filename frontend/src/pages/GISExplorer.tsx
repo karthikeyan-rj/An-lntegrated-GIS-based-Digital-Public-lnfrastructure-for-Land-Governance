@@ -152,16 +152,23 @@ function featureCenter(geometry: GeoJSON.Geometry | undefined): { lat: number; l
     const first = (geometry.coordinates as Array<[number, number]>)[0]
     return first ? { lat: first[1], lng: first[0] } : null
   }
-  const ring = (geometry.coordinates as number[][][][])[0]
+  const coords: any = geometry.coordinates
+  const ring = coords && coords[0]
   if (!ring || !ring.length) return null
   let latSum = 0
   let lngSum = 0
-  for (const pt of ring[0] as Array<[number, number]>) {
-    latSum += pt[1]
-    lngSum += pt[0]
+  for (const pt of ring) {
+    const la = typeof pt?.[1] === 'number' ? pt[1] : NaN
+    const lo = typeof pt?.[0] === 'number' ? pt[0] : NaN
+    if (!Number.isFinite(la) || !Number.isFinite(lo)) return null
+    latSum += la
+    lngSum += lo
   }
-  const n = ring[0].length
-  return { lat: latSum / n, lng: lngSum / n }
+  const n = ring.length
+  const lat = latSum / n
+  const lng = lngSum / n
+  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null
+  return { lat, lng }
 }
 
 /** Ray-casting point-in-polygon. `ring` = array of [lng, lat] positions (well-formed GeoJSON). */

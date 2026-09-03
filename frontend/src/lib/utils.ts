@@ -26,8 +26,10 @@ export function generateULPIN(state: string, district: string, village: string):
 }
 
 export function timeAgo(date: string): string {
-  const now = new Date()
+  if (!date) return '—'
   const d = new Date(date)
+  if (Number.isNaN(d.getTime())) return '—'
+  const now = new Date()
   const diff = now.getTime() - d.getTime()
   const mins = Math.floor(diff / 60000)
   const hrs = Math.floor(mins / 60)

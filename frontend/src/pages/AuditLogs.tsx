@@ -124,12 +124,12 @@ export default function AuditLogs() {
                 {filtered.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/50 transition-colors">
                     <td className="py-2 px-3 text-slate-500 whitespace-nowrap">
-                      {new Date(log.timestamp).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      {formatAuditDate(log.timestamp)}
                     </td>
                     <td className="py-2 px-3">
                       <div className="flex items-center gap-2">
                         <div className="w-5 h-5 rounded-full bg-gov-50 text-gov-700 flex items-center justify-center text-[9px] font-bold">
-                          {log.userName.split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
+                          {String(log.userName || '?').split(' ').map((w) => w[0]).join('').slice(0, 2).toUpperCase()}
                         </div>
                         <span className="font-medium text-slate-900">{log.userName}</span>
                       </div>
@@ -162,4 +162,12 @@ export default function AuditLogs() {
       </div>
     </div>
   )
+}
+
+/** Render a timestamp defensively — an invalid date must never crash the list. */
+function formatAuditDate(value: string): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }

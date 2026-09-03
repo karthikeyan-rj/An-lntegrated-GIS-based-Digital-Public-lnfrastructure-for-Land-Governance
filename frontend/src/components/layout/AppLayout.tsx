@@ -4,7 +4,18 @@ import { Sidebar } from './Sidebar'
 import { Topbar } from './Topbar'
 
 export function AppLayout() {
-  const { isAuthenticated } = useAuth()
+  const { isAuthenticated, authReady } = useAuth()
+
+  if (!authReady) {
+    return (
+      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-gov-600 mb-3" />
+          <p className="text-sm text-slate-500">Loading authentication…</p>
+        </div>
+      </div>
+    )
+  }
 
   if (!isAuthenticated) return <Navigate to="/login" replace />
 

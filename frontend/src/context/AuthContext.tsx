@@ -1,10 +1,12 @@
-import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useEffect, type ReactNode } from 'react'
 import type { User, UserRole } from '@/types'
 import { api, type AuthUser } from '@/lib/api'
 
 interface AuthContextType {
   user: User | null
   isAuthenticated: boolean
+  /** False until the persisted session has been restored on mount. */
+  authReady: boolean
   /** Demo login — instantly logs in as a demo role, no backend required. */
   login: (role: UserRole) => void
   /** Real login against the MongoDB backend. Throws on failure, never demo-falls back. */
@@ -49,6 +51,34 @@ function isUserRole(r: string): r is UserRole {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [isReal, setIsReal] = useState(false)
+  const [authReady, setAuthReady] = useState(false)
+
+  // Restore any persisted session on mount so refreshes/deep-links don't
+  // start unauthenticated (avoids a flash of "redirecting to login" and keeps
+  // authentication initialization deterministic).
+  useEffect(() => {
+    let restoredUser: User | null = null
+    try {
+      const raw = localStorage.getItem(USER_KEY)
+      if (raw) {
+        const parsed = JSON.parse(raw)
+        if (parsed && parsed.role && isUserRole(parsed.role) && parsed.name) {
+          restoredUser = { ...parsed } as User
+        }
+      }
+    } catch { /* ignore malformed storage */ }
+    if (restoredUser) {
+      setUser(restoredUser)
+      setIsReal(!!restoredUser.isReal)
+    }
+    setAuthReady(true)
+  }, [])
+
+  const persistUser = useCallback((u: User) => {
+    try {
+      localStorage.setItem(USER_KEY, JSON.stringify(u))
+    } catch { /* ignore */ }
+  }, [])
 
   const persistToken = useCallback((token: string) => {
     try {
@@ -57,12 +87,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }, [])
 
   const login = useCallback((role: UserRole) => {
-    setUser(DEMO_USERS[role])
+    const u = DEMO_USERS[role]
+    setUser(u)
     setIsReal(false)
+    persistUser(u)
     try {
       localStorage.removeItem(TOKEN_KEY)
     } catch { /* ignore */ }
-  }, [])
+  }, [persistUser])
 
   const loginReal = useCallback(async (email: string, password: string) => {
     const res = await api.login(email, password)
@@ -70,8 +102,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = toUser(res.user, 'real')
     setUser(u)
     setIsReal(true)
+    persistUser(u)
     return u
-  }, [persistToken])
+  }, [persistToken, persistUser])
 
   const register = useCallback(async (payload: { name: string; email: string; password: string; role?: string; department?: string }) => {
     const res = await api.register(payload)
@@ -79,19 +112,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const u = toUser(res.user, 'real')
     setUser(u)
     setIsReal(true)
+    persistUser(u)
     return u
-  }, [persistToken])
+  }, [persistToken, persistUser])
 
   const logout = useCallback(() => {
     setUser(null)
     setIsReal(false)
     try {
       localStorage.removeItem(TOKEN_KEY)
+      localStorage.removeItem(USER_KEY)
     } catch { /* ignore */ }
   }, [])
 
   return (
-    <AuthContext.Provider value={{ user, isAuthenticated: !!user, login, loginReal, register, logout, isReal }}>
+    <AuthContext.Provider value={{ user, isAuthenticated: !!user, authReady, login, loginReal, register, logout, isReal }}>
       {children}
     </AuthContext.Provider>
   )

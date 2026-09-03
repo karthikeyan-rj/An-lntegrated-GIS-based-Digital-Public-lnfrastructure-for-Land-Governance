@@ -13,7 +13,9 @@ export default defineConfig({
   server: {
     proxy: {
       // Proxy API calls to the LandStack backend during development.
-      '/api': {
+      // Use a trailing slash so the SPA route `/apis` (Integrations page) is NOT
+      // intercepted/proxied — only real `/api/<resource>` calls reach the backend.
+      '/api/': {
         target: 'http://localhost:4000',
         changeOrigin: true,
       },

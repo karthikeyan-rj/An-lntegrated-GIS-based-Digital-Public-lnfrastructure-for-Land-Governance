@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { Fragment, useEffect, useState } from 'react'
 import {
   Wifi,
   Database,
@@ -112,9 +112,8 @@ export default function Integrations() {
                 {departments.map((dept) => {
                   const isExpanded = expandedId === dept.id
                   return (
-                    <>
+                    <Fragment key={dept.id}>
                       <tr
-                        key={dept.id}
                         className={cn('hover:bg-slate-50/50 transition-colors cursor-pointer', isExpanded && 'bg-slate-50/30')}
                         onClick={() => toggle(dept.id)}
                       >
@@ -155,7 +154,7 @@ export default function Integrations() {
                           <span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-mono font-medium text-slate-600">{dept.apiVersion}</span>
                         </td>
                         <td className="py-2.5 px-4 text-xs text-slate-500 whitespace-nowrap">
-                          {new Date(dept.lastSync).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                          {formatDateSafe(dept.lastSync)}
                         </td>
                         <td className="py-2.5 px-4">
                           <ChevronDown className={cn('w-4 h-4 text-slate-400 transition-transform', isExpanded && 'rotate-180')} />
@@ -163,7 +162,7 @@ export default function Integrations() {
                       </tr>
 
                       {isExpanded && (
-                        <tr key={`${dept.id}-detail`}>
+                        <tr>
                           <td colSpan={7} className="px-4 pb-3 pt-1">
                             <div className="rounded-lg border border-slate-200 bg-slate-50/50 p-4">
                               <div className="flex items-center gap-2 mb-3">
@@ -180,7 +179,7 @@ export default function Integrations() {
                                 <DetailCard label="API Status" value={dept.connected ? 'Operational' : 'Unavailable'} ok={dept.connected} />
                                 <DetailCard
                                   label="Last Synchronization"
-                                  value={new Date(dept.lastSync).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                                  value={formatDateSafe(dept.lastSync)}
                                 />
                               </div>
                               {!dept.connected && (
@@ -192,7 +191,7 @@ export default function Integrations() {
                           </td>
                         </tr>
                       )}
-                    </>
+                    </Fragment>
                   )
                 })}
               </tbody>
@@ -226,4 +225,12 @@ function DetailCard({ label, value, mono, ok }: { label: string; value: string; 
       </p>
     </div>
   )
+}
+
+/** Render a date string defensively — an invalid date must never crash the page. */
+function formatDateSafe(value: string): string {
+  if (!value) return '—'
+  const d = new Date(value)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })
 }
