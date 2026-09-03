@@ -107,6 +107,8 @@ export const api = {
   aiChat: (message: string, context?: any) =>
     request<any>('/ai/chat', { method: 'POST', body: { message, context } }),
   changeDetection: (body: any) => request<any>('/ai/change-detection', { method: 'POST', body }),
+  parcelInsights: (body: any) => request<any>('/ai/parcel-insights', { method: 'POST', body }),
+  aiConfig: () => request<any>('/ai/config'),
 
   // System
   notifications: () => request<{ notifications: any[]; unread: number }>('/notifications'),

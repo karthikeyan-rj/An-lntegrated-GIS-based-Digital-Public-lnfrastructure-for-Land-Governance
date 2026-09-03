@@ -1,6 +1,7 @@
 import 'dotenv/config'
 import connectDB from './src/config/db.js'
 import { createApp } from './src/app.js'
+import { refreshGeminiState } from './src/services/aiService.js'
 
 async function start() {
   const port = process.env.PORT || 4000
@@ -13,9 +14,16 @@ async function start() {
 
   const app = createApp()
 
+  // Gemini config diagnostic — reports presence only, never the key.
+  const g = refreshGeminiState()
+
   app.listen(port, () => {
     console.log(`✔ LandStack API listening on http://localhost:${port}`)
     console.log('  MongoDB: connected')
+    console.log(`  Gemini API key configured: ${g.configured ? 'yes' : 'no'} (model: ${g.model})`)
+    if (!g.configured) {
+      console.log('    → AI endpoints will serve labeled DEMO reasoning until GEMINI_API_KEY is set in backend/.env')
+    }
   })
 }
 

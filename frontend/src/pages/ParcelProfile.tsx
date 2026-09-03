@@ -479,27 +479,30 @@ function DocumentsTab({ parcel }: { parcel: Parcel }) {
   return (
     <Card title="Documents">
       <div className="space-y-2">
-        {docs.map((doc, i) => (
-          <div key={i} className="flex items-center justify-between p-3 rounded-lg hover:bg-slate-50 border border-slate-100">
-            <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
-                <doc.icon className="w-4 h-4" />
+        {docs.map((doc, i) => {
+          const disabled = doc.status !== 'available'
+          return (
+            <div key={i} className="flex items-center justify-between p-3 rounded-lg hover:bg-slate-50 border border-slate-100">
+              <div className="flex items-center gap-3">
+                <div className="w-9 h-9 rounded-lg bg-blue-50 flex items-center justify-center text-blue-600">
+                  <doc.icon className="w-4 h-4" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-slate-900">{doc.name}</p>
+                  <p className="text-xs text-slate-400">{doc.status === 'available' ? 'Available' : 'Not Available'}</p>
+                </div>
               </div>
-              <div>
-                <p className="text-sm font-medium text-slate-900">{doc.name}</p>
-                <p className="text-xs text-slate-400">{doc.status === 'available' ? 'Available' : 'Not Available'}</p>
+              <div className="flex items-center gap-2">
+                <Button variant="ghost" size="sm" disabled={disabled} onClick={() => viewDocument(parcel, doc.name)}>
+                  <Eye className="w-3.5 h-3.5" /> View
+                </Button>
+                <Button variant="ghost" size="sm" disabled={disabled} onClick={() => downloadDocument(parcel, doc.name)}>
+                  <Download className="w-3.5 h-3.5" /> Download
+                </Button>
               </div>
             </div>
-            <div className="flex items-center gap-2">
-              <Button variant="ghost" size="sm">
-                <Eye className="w-3.5 h-3.5" /> View
-              </Button>
-              <Button variant="ghost" size="sm">
-                <Download className="w-3.5 h-3.5" /> Download
-              </Button>
-            </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
     </Card>
   )
@@ -560,6 +563,116 @@ function exportParcel(parcel: Parcel) {
   a.download = `${parcel.ulpin}-parcel.json`
   a.click()
   URL.revokeObjectURL(url)
+}
+
+function docSlug(name: string) {
+  return name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '')
+}
+
+function buildDocumentContent(parcel: Parcel, name: string): string {
+  const gen = (title: string, rows: Array<[string, string | number | boolean | undefined]>) =>
+    [
+      `${'='.repeat(60)}`,
+      title,
+      `Parcel: ${parcel.ulpin} (${parcel.surveyNumber}, ${parcel.village}, ${parcel.district})`,
+      `Generated: ${new Date().toLocaleString()}`,
+      `${'='.repeat(60)}`,
+      ...rows.map(([k, v]) => `${k}: ${v ?? '—'}`),
+      '',
+    ].join('\n')
+
+  const common: Array<[string, string | number | boolean | undefined]> = [
+    ['ULPIN', parcel.ulpin],
+    ['Survey Number', parcel.surveyNumber],
+    ['Village', parcel.village],
+    ['Taluk', parcel.taluk],
+    ['District', parcel.district],
+    ['State', parcel.state],
+    ['Owner', parcel.ownerName],
+    ['Father / Guardian', parcel.ownerFatherName],
+    ['Area', `${formatNumber(parcel.area)} ${parcel.areaUnit}`],
+    ['Classification', parcel.classification],
+    ['Patta Number', parcel.pattaNumber],
+  ]
+
+  switch (name) {
+    case 'Record of Rights (RoR)':
+      return gen(`RECORD OF RIGHTS (RoR) — ${parcel.ulpin}`, [
+        ...common,
+        ['Registered Date', parcel.registeredDate],
+        ['Ownership Status', parcel.ownershipStatus],
+        ['Ownership Type', parcel.ownershipType],
+        ['Verification', parcel.verificationStatus],
+        ['Restrictions', parcel.restrictions.length ? parcel.restrictions.join(', ') : 'None'],
+      ])
+    case 'Registration Certificate':
+      return gen(`REGISTRATION CERTIFICATE — ${parcel.ulpin}`, [
+        ...common,
+        ['Registration Date', parcel.registeredDate],
+        ['Registered Under (Owner)', parcel.ownerName],
+        ['Dispute Status', parcel.disputeStatus],
+      ])
+    case 'Tax Receipt':
+      return gen(`PROPERTY TAX RECEIPT — ${parcel.ulpin}`, [
+        ...common,
+        ['Annual Tax', parcel.taxAmount ? formatCurrency(parcel.taxAmount) : '—'],
+        ['Tax Status', parcel.propertyTaxStatus],
+      ])
+    case 'Encumbrance Certificate':
+      return gen(`ENCUMBRANCE CERTIFICATE — ${parcel.ulpin}`, [
+        ...common,
+        ['Encumbrance Status', parcel.encumbranceStatus],
+        ['Mortgage Bank', parcel.mortgageBank ?? 'None'],
+        ['Mortgage Amount', parcel.mortgageAmount ? formatCurrency(parcel.mortgageAmount) : '—'],
+        ['Restrictions', parcel.restrictions.length ? parcel.restrictions.join(', ') : 'None'],
+      ])
+    case 'Building Permission':
+      return gen(`BUILDING PERMISSION — ${parcel.ulpin}`, [
+        ...common,
+        ['Permission', parcel.buildingPermission],
+        ['Zoning', parcel.zoning],
+      ])
+    case 'Survey Map':
+      return gen(`SURVEY MAP (GeoJSON) — ${parcel.ulpin}`, [
+        ...common,
+        ['ULPIN (Key)', parcel.ulpin],
+        ['Centroid Coordinates', JSON.stringify(parcel.coordinates)],
+        ['Bounds', JSON.stringify(parcel.bounds ?? '—', null, 2)],
+      ])
+    case 'Patta Copy':
+      return gen(`PATTA COPY — ${parcel.ulpin}`, [
+        ...common,
+        ['Patta Number', parcel.pattaNumber],
+        ['Ownership Status', parcel.ownershipStatus],
+        ['Verification', parcel.verificationStatus],
+      ])
+    default:
+      return gen(`${name} — ${parcel.ulpin}`, common)
+  }
+}
+
+function openDocument(parcel: Parcel, name: string, preferDownload: boolean) {
+  const content = buildDocumentContent(parcel, name)
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  if (preferDownload) {
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${parcel.ulpin}-${docSlug(name)}.txt`
+    a.click()
+    URL.revokeObjectURL(url)
+  } else {
+    window.open(url, '_blank')
+    window.setTimeout(() => URL.revokeObjectURL(url), 30000)
+  }
+}
+
+function viewDocument(parcel: Parcel, name: string) {
+  openDocument(parcel, name, false)
+}
+
+function downloadDocument(parcel: Parcel, name: string) {
+  openDocument(parcel, name, true)
 }
 
 function ApplicationsTab({ parcel }: { parcel: Parcel }) {

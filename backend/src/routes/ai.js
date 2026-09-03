@@ -8,6 +8,8 @@ const router = Router()
 router.post('/change-detection', protect, authorize(['revenue_officer', 'registration_officer', 'planning_officer', 'tax_officer', 'administrator']), aiController.changeDetection)
 router.post('/anomaly-detection', protect, authorize(['revenue_officer', 'registration_officer', 'planning_officer', 'tax_officer', 'administrator']), aiController.anomalyDetection)
 router.post('/document-extraction', protect, authorize(['revenue_officer', 'registration_officer', 'planning_officer', 'tax_officer', 'administrator']), aiController.documentExtraction)
+router.post('/parcel-insights', protect, authorize(['revenue_officer', 'registration_officer', 'planning_officer', 'tax_officer', 'administrator']), aiController.parcelInsights)
+router.get('/config', protect, aiController.config)
 router.post('/chat', protect, aiController.chat)
 
 export default router

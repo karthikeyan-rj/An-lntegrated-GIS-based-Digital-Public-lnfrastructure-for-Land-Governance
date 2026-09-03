@@ -270,15 +270,59 @@ export default function AIInsights() {
   const [parcelQuery, setParcelQuery] = useState('')
   const [showParcelResults, setShowParcelResults] = useState(false)
   const [selectedParcel, setSelectedParcel] = useState<Parcel | null>(null)
+  const [parcelInsights, setParcelInsights] = useState<ParcelInsight[]>([])
+  const [insightsLoading, setInsightsLoading] = useState(false)
+  const [insightSource, setInsightSource] = useState<'gemini' | 'demo' | null>(null)
+  const [insightStatus, setInsightStatus] = useState<'ok' | 'degraded' | null>(null)
 
   const parcelSearchResults = useMemo(() => {
     if (!parcelQuery.trim()) return []
     return searchParcels(parcelQuery).slice(0, 8)
   }, [parcelQuery])
 
-  const parcelInsights = useMemo(() => {
-    if (!selectedParcel) return []
-    return computeParcelInsights(selectedParcel)
+  // Load AI parcel insights from the backend (/api/ai/parcel-insights → Gemini
+  // when GEMINI_API_KEY is set, else labeled demo reasoning). Falls back to the
+  // local deterministic generator if the backend is unreachable.
+  useEffect(() => {
+    if (!selectedParcel) {
+      setParcelInsights([])
+      setInsightSource(null)
+      setInsightStatus(null)
+      return
+    }
+    let cancelled = false
+    setInsightsLoading(true)
+    const fromLocal = () => {
+      if (cancelled) return
+      setParcelInsights(computeParcelInsights(selectedParcel))
+      setInsightStatus('ok')
+      setInsightSource('demo')
+    }
+    ;(async () => {
+      try {
+        const res = await api.parcelInsights({ ulpin: selectedParcel.ulpin, parcel: selectedParcel })
+        if (cancelled) return
+        const findings: ParcelInsight[] = (res?.findings ?? []).map((f: any) => ({
+          title: f.title,
+          description: f.description || f.message || '',
+          confidence: typeof f.confidence === 'number' ? f.confidence : 80,
+          severity: (f.severity === 'high' || f.severity === 'medium' || f.severity === 'low') ? f.severity : 'medium',
+          action: f.action || f.recommendation || 'Verify with the responsible department.',
+        }))
+        if (findings.length) {
+          setParcelInsights(findings)
+          setInsightStatus(res?.status === 'degraded' ? 'degraded' : 'ok')
+          setInsightSource(res?.provider === 'gemini' ? 'gemini' : 'demo')
+        } else {
+          fromLocal()
+        }
+      } catch {
+        fromLocal()
+      } finally {
+        if (!cancelled) setInsightsLoading(false)
+      }
+    })()
+    return () => { cancelled = true }
   }, [selectedParcel])
 
   const avgConfidence = useMemo(() => {
@@ -338,6 +382,7 @@ export default function AIInsights() {
     } catch {
       const parcel = searchParcels(selectedApp.ulpin)[0]
       setAppReview(computeAppReview(selectedApp, parcel))
+      setReviewError('AI service temporarily unavailable. Showing labeled demo review. Try again.')
     } finally {
       setReviewLoading(false)
     }
@@ -480,8 +525,23 @@ export default function AIInsights() {
                 </div>
                 <ConfidenceBar value={avgConfidence} />
                 <p className="text-[10px] text-slate-400 mt-1.5">
-                  Based on {parcelInsights.length} insight(s) · AI-ASSISTED · requires human verification
+                  {insightsLoading
+                    ? 'Running AI analysis over backend...'
+                    : `Based on ${parcelInsights.length} insight(s) · AI-ASSISTED · requires human verification`}
                 </p>
+                {insightSource && (
+                  <p className={cn(
+                    'text-[10px] font-medium mt-1 inline-flex items-center gap-1 px-1.5 py-0.5 rounded',
+                    insightSource === 'gemini' ? 'bg-emerald-50 text-emerald-700' : 'bg-amber-50 text-amber-700',
+                  )}>
+                    {insightSource === 'gemini' ? <CheckCircle2 className="w-3 h-3" /> : <AlertTriangle className="w-3 h-3" />}
+                    {insightSource === 'gemini'
+                      ? 'Powered by Gemini'
+                      : insightStatus === 'degraded'
+                        ? 'AI service unavailable — showing labeled demo reasoning'
+                        : 'Demo reasoning (backend AI not configured / unreachable)'}
+                  </p>
+                )}
               </div>
             </div>
           )}
@@ -519,8 +579,14 @@ export default function AIInsights() {
             </div>
           )}
 
-          {/* Empty state */}
-          {selectedParcel && parcelInsights.length === 0 && (
+          {/* Empty / loading state */}
+          {selectedParcel && insightsLoading && parcelInsights.length === 0 && (
+            <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
+              <Loader2 className="w-8 h-8 text-slate-300 mx-auto mb-2 animate-spin" />
+              <p className="text-sm text-slate-500">Running AI analysis...</p>
+            </div>
+          )}
+          {selectedParcel && !insightsLoading && parcelInsights.length === 0 && (
             <div className="bg-white border border-slate-200 rounded-lg p-8 text-center">
               <Brain className="w-8 h-8 text-slate-300 mx-auto mb-2" />
               <p className="text-sm text-slate-500">No insights generated for this parcel.</p>

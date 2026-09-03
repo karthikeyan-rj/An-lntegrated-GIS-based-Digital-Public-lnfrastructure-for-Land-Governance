@@ -651,27 +651,66 @@ export default function GISExplorer() {
     })
     overlayRefs.current.disputes = disputeGroup
 
-    // Roads layer — demo network linking the Tamil Nadu demo clusters.
+    // Roads layer — demo street connectors aligned with the demo parcel fabric.
+    // Real vehicular roads are provided by the OSM base map underneath; this
+    // layer is an explicit DEMO-only overlay so the toggle is meaningful: it
+    // draws short connector segments along each demo cluster's parcel grid
+    // (never a fake cross-district trunk line) and is clearly labelled DEMO.
     const roadGroup = L.layerGroup()
-    const clusters: Array<[number, number]> = []
-    const tnParcels = parcelFeatureCollection.features.filter((f) => {
-      const s = String(((f.properties || {}) as Record<string, unknown>).state || '')
-      return s === 'Tamil Nadu'
-    })
-    tnParcels.forEach((feature) => {
-      const c = featureCenter(feature.geometry)
-      if (c) clusters.push([c.lat, c.lng])
-    })
-    if (clusters.length >= 2) {
-      const polyline = L.polyline(clusters, {
-        color: '#f97316',
-        weight: 4,
-        opacity: 0.85,
-        dashArray: '8 6',
-      })
-      polyline.bindTooltip('Demo road network (connecting demo parcels) — not real geometry', { direction: 'top' })
-      roadGroup.addLayer(polyline)
+
+    /** Build a small street-grid across the parcels of one village cluster. */
+    function gridEdges(points: Array<{ lat: number; lng: number }>): Array<Array<[number, number]>> {
+      const gap = 0.001 // deg — merge parcels into rows/columns by proximity
+      const sorted = [...points].sort((a, b) => a.lat - b.lat || a.lng - b.lng)
+      const rows: Array<Array<{ lat: number; lng: number }>> = []
+      for (const pt of sorted) {
+        const row = rows.find((r) => r.some((q) => Math.abs(q.lat - pt.lat) < gap))
+        if (row) row.push(pt)
+        else rows.push([pt])
+      }
+      const edges: Array<Array<[number, number]>> = []
+      for (let i = 0; i < rows.length; i++) {
+        const row = [...rows[i]].sort((a, b) => a.lng - b.lng)
+        for (let k = 0; k < row.length - 1; k++) {
+          edges.push([[row[k].lat, row[k].lng], [row[k + 1].lat, row[k + 1].lng]])
+        }
+      }
+      for (let i = 0; i < rows.length - 1; i++) {
+        const rowA = [...rows[i]].sort((a, b) => a.lng - b.lng)
+        const rowB = [...rows[i + 1]].sort((a, b) => a.lng - b.lng)
+        const count = Math.min(rowA.length, rowB.length)
+        for (let k = 0; k < count; k++) {
+          edges.push([[rowA[k].lat, rowA[k].lng], [rowB[k].lat, rowB[k].lng]])
+        }
+      }
+      return edges
     }
+
+    const clustersByVillage = new Map<string, Array<{ lat: number; lng: number }>>()
+    parcelFeatureCollection.features.forEach((feature) => {
+      const props = (feature.properties || {}) as Record<string, unknown>
+      const s = String(props.state || '')
+      if (s !== 'Tamil Nadu') return
+      const village = String(props.village || props.district || 'Cluster')
+      const c = featureCenter(feature.geometry)
+      if (!c) return
+      if (!clustersByVillage.has(village)) clustersByVillage.set(village, [])
+      clustersByVillage.get(village)!.push(c)
+    })
+
+    clustersByVillage.forEach((points) => {
+      gridEdges(points).forEach((edge) => {
+        roadGroup.addLayer(
+          L.polyline(edge, { color: '#f97316', weight: 2, opacity: 0.85, dashArray: '4 5' })
+        )
+      })
+    })
+
+    const roadInfo = L.polyline([], { interactive: false })
+    roadInfo.bindTooltip(
+      'Demo street connectors (aligned with the demo parcel grid). Real roads come from the OSM base map.',
+      { direction: 'top' }
+    )
     overlayRefs.current.roads = roadGroup
 
     // Utilities layer — indicators per parcel (electricity / water / sewerage).
@@ -1177,8 +1216,9 @@ export default function GISExplorer() {
                 <div className="my-1 border-t border-slate-200" />
                 <div className="flex items-center gap-2">
                   <span className="inline-block w-4 border-t-2 border-dashed" style={{ borderColor: '#f97316' }} />
-                  <span className="text-[10px] text-slate-600">Demo road network (DEMO)</span>
+                  <span className="text-[10px] text-slate-600">Demo street connectors (DEMO)</span>
                 </div>
+                <p className="text-[9px] text-slate-400 mt-1">Real roads shown by OSM base map</p>
               </>
             )}
             {landUseActive ? (

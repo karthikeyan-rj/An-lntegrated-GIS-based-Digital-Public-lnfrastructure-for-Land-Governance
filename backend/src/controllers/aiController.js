@@ -1,4 +1,4 @@
-import { aiService } from '../services/aiService.js'
+import { aiService, geminiState, refreshGeminiState } from '../services/aiService.js'
 import { recordAudit } from '../services/auditService.js'
 
 /**
@@ -59,5 +59,34 @@ export async function chat(req, res) {
   }
 }
 
-export const aiController = { changeDetection, anomalyDetection, documentExtraction, chat }
+// POST /api/ai/parcel-insights — structured risk/insight analysis for a parcel
+export async function parcelInsights(req, res) {
+  try {
+    const { ulpin, parcel } = req.body || {}
+    // Accept either a full parcel object or a ULPIN (looked up through a helper).
+    const payload = parcel && Object.keys(parcel).length ? parcel : { ulpin }
+    const result = await aiService.parcelInsights({ parcel: payload })
+    await recordAudit({ user: req.user, action: 'ai.parcel_insights', resource: 'ai', resourceId: ulpin || payload.ulpin || 'unknown', result: 'success', metadata: { confidence: result.confidence, provider: result.provider }, ip: req.ip })
+    res.json(result)
+  } catch (error) {
+    console.error('parcelInsights error:', error.message)
+    res.status(500).json({ message: 'Server error' })
+  }
+}
+
+// GET /api/ai/config — Gemini configuration diagnostic (never exposes the key)
+export function config(req, res) {
+  refreshGeminiState()
+  res.json({
+    provider: 'gemini',
+    configured: geminiState.configured,
+    model: geminiState.model,
+    status: geminiState.configured ? 'configured' : 'not_configured',
+    message: geminiState.configured
+      ? 'Gemini API key configured: yes'
+      : 'Gemini API key configured: no — using labeled demo fallback.',
+  })
+}
+
+export const aiController = { changeDetection, anomalyDetection, documentExtraction, chat, parcelInsights, config }
 export default aiController

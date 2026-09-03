@@ -23,6 +23,7 @@ const DISTRICT_MAP = {
   CHN: 'Chennai',
   CBE: 'Coimbatore',
   TRZ: 'Tiruchirappalli',
+  SLM: 'Salem',
   CHD: 'Chandigarh',
 }
 
